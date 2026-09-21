@@ -17,7 +17,8 @@ mkdir -p "$TARGET_DIR"
 
 for f in "$TEMPLATE_DIR"/*.conf; do
     name=$(basename "$f")
-    envsubst < "$f" > "$TARGET_DIR/$name"
+    envsubst '${AMI_PASSWORD} ${SIP_ALICE_PASSWORD} ${SIP_BOB_PASSWORD} ${EXTERNAL_MEDIA_ADDRESS} ${EXTERNAL_SIGNALING_PORT}' \
+        < "$f" > "$TARGET_DIR/$name"
 done
 
 mkdir -p /var/log/asterisk /var/spool/asterisk/monitor /recordings

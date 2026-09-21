@@ -129,19 +129,19 @@ class AGISession:
         return self._send(f'STREAM FILE {sound_name} "{escape_digits}"')
 
     def record_file(
-        self,
-        filename: str,
-        fmt: str,
-        escape_digits: str,
-        timeout_ms: int,
-        beep: bool = False,
-    ):
-        command = f'RECORD FILE {filename} {fmt} "{escape_digits}" {timeout_ms}'
-
-        if beep:
-            command += " 0 BEEP"
-
-        return self._send(command)
+            self,
+            filename: str,
+            fmt: str,
+            escape_digits: str,
+            timeout_ms: int,
+            beep: bool = False,
+        ):
+            command = f'RECORD FILE {filename} {fmt} "{escape_digits}" {timeout_ms}'
+    
+            if beep:
+                command += " 0 BEEP"
+    
+            return self._send(command)
 
     def get_variable(self, name: str) -> str | None:
         resp = self._send(f"GET VARIABLE {name}")
@@ -183,22 +183,10 @@ class AGIRequestHandler(socketserver.StreamRequestHandler):
         try:
             scenario = load_scenario(scenario_id)
             session.answer()
-            info_sound = scenario.get("info_sound")
-            if info_sound:
-                session.stream_file(info_sound)
-                log_event(
-                    "info_played",
-                    call_id=call_id,
-                    session_id=session_id,
-                    scenario_id=scenario_id,
-                    sound=info_sound,
-                )
-                
             session.verbose(f"Сценарий '{scenario['title']}' запущен", 1)
 
             for prompt in scenario.get("prompts", []):
                 session.stream_file(prompt["sound"])
-                
                 log_event(
                     "prompt_played",
                     call_id=call_id,

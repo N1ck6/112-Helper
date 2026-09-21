@@ -1,52 +1,50 @@
-# Этап 3 — виртуальный учебный абонент
+# Этап 4 — аудио (запись, WAV, MP3, воспроизведение)
 
 ## Что здесь реализовано
 
-- `virtual_caller/fastagi_server.py` — отдельный сервис (отдельный
-  контейнер), который через протокол AGI "играет" за позвонившего:
-  отвечает на звонок, проигрывает реплики сценария, опционально
-  записывает ответ диспетчера, кладёт JSON-лог событий.
-- Dialplan-номера `700`/`701` (context `[training]`, этап2+3) — трейни
-  набирает номер и получает учебный сценарий.
-- Привязка звонка к `session_id` (генерируется на каждый звонок),
-  `scenario_id` (берётся из AGI-адреса `agi://.../scenario_001`) и
-  `call_id` (`agi_uniqueid` — родной ID канала Asterisk).
-- `scenarios/*.json` — описание сценария (реплики + сколько секунд
-  писать ответ трейни). Звуки — заглушки из штатных файлов Asterisk,
-  см. комментарий `_comment` в каждом JSON.
+- **Запись звонка целиком**: `MixMonitor()` в dialplan (`asterisk/conf/extensions.conf`,
+  контекст `[training]`) — пишет смикшированный WAV обеих сторон разговора
+  в `/recordings/${UNIQUEID}.wav`.
+- **Запись ответа диспетчера отдельно**: уже было в `virtual_caller`
+  (этап 3, `RECORD FILE`) — теперь лежит в той же папке `/recordings`.
+- **Конвертация в MP3 "при необходимости"**: `audio_tools/convert_to_mp3.py`
+  — ручной/по требованию скрипт (не постоянный демон), оборачивает `ffmpeg`.
+- **Воспроизведение**: `audio_tools/serve_recordings.py` — HTTP-сервер
+  со списком файлов; открываете в браузере `http://localhost:8090/` и
+  проигрываете WAV/MP3 прямо там (браузер умеет нативно).
+- **Список записей с привязкой к сценарию**: `audio_tools/list_recordings.py`
+  сопоставляет `call_id` (имя файла) с `scenario_id`/`session_id` из
+  `sessions.log` этапа 3.
 
 ## Как это работает
 
-```text
+```
 alice набирает 700
-        │
-        ▼
-Asterisk: Answer() -> AGI(agi://virtual-caller:4573/scenario_001)
-        │  (TCP-соединение, Asterisk выступает КЛИЕНТОМ)
-        ▼
-virtual_caller: читает agi_* переменные окружения
-        │        генерирует session_id, читает scenario_001.json
-        ▼
-        ANSWER -> STREAM FILE (реплика 1) -> STREAM FILE (реплика 2) -> ...
-        -> RECORD FILE (ответ диспетчера) -> HANGUP
-        │
-        ▼
-data/stage3/sessions/sessions.log  <- JSON-лог: call_started, prompt_played,
-                                       response_recorded, call_ended
+   Answer() -> MixMonitor(/recordings/${UNIQUEID}.wav,b) -> AGI(...) -> StopMixMonitor()
+                        │
+                        ▼
+        data/stage4/recordings/<call_id>.wav   (полный разговор)
+        data/stage4/recordings/response_<call_id>.wav  (только ответ диспетчера)
+                        │
+       по требованию:   python convert_to_mp3.py --once  ->  <call_id>.mp3
+                        │
+       воспроизведение: http://localhost:8090/  (audio-tools, всегда включён)
 ```
 
-## Почему именно так
+## Почему так
 
-- **Отдельный контейнер, а не код внутри Asterisk**: инструкция прямо
-  требует не встраивать ML/сценарную логику в SIP-код (п.3, этап 6;
-  п.5.2/5.5). AGI по TCP (FastAGI) — штатный механизм Asterisk именно
-  для этого разделения.
-- **JSON Lines вместо БД**: PostgreSQL появляется по плану только в
-  этапе 8 вместе с Backend. До того — простой файл, который легко
-  инспектировать `cat`/`tail` и который не требует лишней инфраструктуры
-  для MVP из 4 этапов.
-- **Bind-mount `/data` на хост**: чтобы `tests/test_stage3_virtual_caller.py`
-  мог проверить результат звонка, просто прочитав файл — без Docker SDK.
+- **MixMonitor, а не ручной захват RTP-потока**: Asterisk уже умеет
+  писать разговор в файл одной командой dialplan — изобретать захват
+  аудио на уровне RTP-пакетов для MVP избыточно (инструкция п.5.6:
+  "не добавлять функциональность, которая не нужна MVP").
+- **MP3 — отдельный ручной скрипт, а не автоматика в дальнейшем**:
+  формулировка ТЗ "добавить MP3 при необходимости" прямо говорит про
+  опциональность; вечно работающий конвертер-демон усложнил бы стенд
+  без необходимости.
+- **Плоские имена файлов** (`<call_id>.wav`, без подпапок по сценарию):
+  связка со сценарием и так есть в `sessions.log`; подпапки на лету
+  в `MixMonitor` не всегда надёжны на разных версиях Asterisk — простое
+  решение снижает риск незамеченной ошибки записи.
 
 ## Ручная проверка
 
@@ -54,22 +52,39 @@ data/stage3/sessions/sessions.log  <- JSON-лог: call_started, prompt_played,
 cp .env.example .env
 docker compose up --build -d
 
-# зарегистрируйте alice в софтфоне (см. README этапа 2, порт 5062)
-# наберите 700, послушайте реплики сценария
+# позвоните на 700 (см. README этапа 2/3 — как подключить софтфон, порт 5063)
+# повесьте трубку
 
-# проверьте лог событий:
-cat data/stage3/sessions/sessions.log
+# 1) файл записался?
+ls -la data/stage4/recordings/
+
+# 2) список с привязкой к сценарию
+docker compose exec audio-tools python list_recordings.py
+
+# 3) конвертация в MP3
+docker compose exec audio-tools python convert_to_mp3.py --once
+
+# 4) воспроизведение — откройте в браузере:
+#    http://localhost:8090/
 ```
 
-Без софтфона — автотест `tests/test_stage3_virtual_caller.py` инициирует
-звонок через AMI Originate на `training,700,1` и проверяет, что в
-`sessions.log` появилась запись `call_started` с ожидаемым `scenario_id`.
+Автотест: `tests/test_stage4_audio.py` — инициирует звонок через AMI,
+дожидается hangup, проверяет что `.wav` появился и начинается с
+корректного RIFF-заголовка (это и есть проверка "аудио реально
+записалось", а не просто пустой файл).
 
 ## Definition of Done
 
-- [x] код в `telephony/stage3_virtual_caller/`
-- [x] сервис запускается (`docker compose up`, зависит только от этапа 3)
-- [x] проверка результата есть (лог + softphone + pytest)
-- [x] ошибки логируются (`logging` в virtual_caller + Asterisk логи)
+- [x] код в `telephony/stage4_audio/`
+- [x] сервисы запускаются одной командой
+- [x] проверка результата есть (файлы на хосте + список + браузер + pytest)
+- [x] ошибки логируются
 - [x] секретов нет
-- [x] этапы 1 и 2 продолжают работать сами по себе
+- [x] этапы 1-3 продолжают работать независимо в своих папках
+
+## Известная проблема: обрыв звонка на ~32-й секунде (исправлено)
+
+- Симптом: любой звонок (700/701, софтфон или CLI originate) рвётся через ~32 с.
+- Причина: в Contact/Via Asterisk указывал `127.0.0.1:5060` (порт внутри контейнера), а на хост проброшен `5063`. ACK от софтфона уходил на 5060 и не доходил; Asterisk переотправлял `200 OK` и через 64×T1 = 32 с (RFC 3261, Timer H/B) завершал вызов.
+- Фикс: `external_signaling_port = ${EXTERNAL_SIGNALING_PORT}` в `pjsip.conf`; та же переменная задаёт левую часть `ports` в `docker-compose.yml` (по умолчанию 5063).
+- Проверка: `docker exec -it telephony-stage4-asterisk asterisk -rx "pjsip set logger on"`, позвонить на 700, в `docker logs` найти `200 OK` → в `Contact:` должен быть `:5063`, после него один `ACK`, без повторных `200 OK`.

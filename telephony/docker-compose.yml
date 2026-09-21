@@ -1,27 +1,29 @@
-# Этап 3 — виртуальный учебный абонент.
-# Запуск:  docker compose -f telephony/stage3_virtual_caller/docker-compose.yml up --build
+# Этап 4 — аудио: запись, MP3, воспроизведение.
+# Запуск:  docker compose -f telephony/stage4_audio/docker-compose.yml up --build
 
 services:
   asterisk:
     build: ./asterisk
-    container_name: telephony-stage3-asterisk
+    container_name: telephony-stage4-asterisk
     depends_on:
       - virtual-caller
     ports:
-      - "${EXTERNAL_SIGNALING_PORT:-5062}:5060/udp"
-      - "${EXTERNAL_SIGNALING_PORT:-5062}:5060/tcp"
-      - "5040:5038/tcp"                 # AMI
-      - "10022-10032:10022-10032/udp"   # RTP
+      - "${EXTERNAL_SIGNALING_PORT:-5063}:5060/udp"
+      - "${EXTERNAL_SIGNALING_PORT:-5063}:5060/tcp"
+      - "5041:5038/tcp"                 # AMI
+      - "10033-10043:10033-10043/udp"   # RTP
     volumes:
       - ./asterisk/conf:/etc/asterisk-templates:ro
       - asterisk-logs:/var/log/asterisk
-      - asterisk-recordings:/recordings
+      # Bind mount на хост — чтобы записи можно было проверить/прослушать
+      # напрямую из файловой системы, без захода в контейнер.
+      - ../../data/stage4/recordings:/recordings
     environment:
       - AMI_PASSWORD=${AMI_PASSWORD:-changeme_ami_pass}
       - SIP_ALICE_PASSWORD=${SIP_ALICE_PASSWORD:-changeme_alice}
       - SIP_BOB_PASSWORD=${SIP_BOB_PASSWORD:-changeme_bob}
       - EXTERNAL_MEDIA_ADDRESS=${EXTERNAL_MEDIA_ADDRESS:-127.0.0.1}
-      - EXTERNAL_SIGNALING_PORT=${EXTERNAL_SIGNALING_PORT:-5062}
+      - EXTERNAL_SIGNALING_PORT=${EXTERNAL_SIGNALING_PORT:-5063}
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 10s
@@ -32,19 +34,26 @@ services:
 
   virtual-caller:
     build: ./virtual_caller
-    container_name: telephony-stage3-virtual-caller
-    # Имя сервиса "virtual-caller" — это и есть hostname, на который
-    # dialplan ссылается как agi://virtual-caller:4573/...
-    # (Docker Compose сам поднимает внутреннюю DNS-сеть между сервисами).
-    ports:
-      - "4573:4573"   # проброшено наружу для отладки/ручного теста протокола
+    container_name: telephony-stage4-virtual-caller
     volumes:
-      # Bind mount (не именованный volume) — специально, чтобы
-      # pytest-тесты на ХОСТЕ могли напрямую читать sessions.log
-      # обычным open() без похода внутрь контейнера/Docker API.
-      - ../../data/stage3/sessions:/data
+      - ../../data/stage4/sessions:/data
+      # virtual_caller тоже пишет короткую запись ответа диспетчера
+      # (RECORD FILE в fastagi_server.py) — в ту же папку, что и
+      # MixMonitor, чтобы всё аудио звонка лежало в одном месте.
+      - ../../data/stage4/recordings:/recordings
+    restart: unless-stopped
+
+  audio-tools:
+    build: ./audio_tools
+    container_name: telephony-stage4-audio-tools
+    depends_on:
+      - asterisk
+    ports:
+      - "8090:8090"   # http://localhost:8090/ — список записей, playback в браузере
+    volumes:
+      - ../../data/stage4/recordings:/recordings
+      - ../../data/stage4/sessions:/data
     restart: unless-stopped
 
 volumes:
   asterisk-logs:
-  asterisk-recordings:
