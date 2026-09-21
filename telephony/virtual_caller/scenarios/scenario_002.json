@@ -1,0 +1,11 @@
+{
+  "scenario_id": "scenario_002",
+  "title": "Пример сценария: ДТП",
+  "info_sound": "beep",
+  "_comment": "См. комментарий в scenario_001.json — звуки временные.",
+  "prompts": [
+    { "text": "Авария на перекрёстке, есть пострадавшие.", "sound": "beep" },
+    { "text": "Машины две, дорога частично перекрыта.", "sound": "beep" }
+  ],
+  "record_response_seconds": 8
+}
