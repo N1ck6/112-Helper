@@ -1,28 +1,31 @@
-# Этап 1 — базовая инфраструктура.
-# Запуск:  docker compose -f telephony/stage1_sip_server/docker-compose.yml up --build
+# Этап 2 — SIP-звонок.
+# Запуск:  docker compose -f telephony/stage2_sip_call/docker-compose.yml up --build
 #
-# Этот файл сознательно НЕ переиспользуется другими этапами через
-# `extends`/`include` — каждый этап самодостаточен и продолжает
-# запускаться сам по себе даже после того, как написаны stage2-4
-# (требование "каждый этап доступен для исследования").
+# Порты хоста отличаются от этапа 1, чтобы можно было держать оба
+# стенда поднятыми одновременно (5061 вместо 5060 и т.д.).
 
 services:
   asterisk:
     build: ./asterisk
-    container_name: telephony-stage1-asterisk
+    container_name: telephony-stage2-asterisk
     ports:
-      - "5060:5060/udp"   # SIP-сигнализация
-      - "5060:5060/tcp"
-      - "5038:5038/tcp"   # AMI (мониторинг/тесты)
-      - "10000-10010:10000-10010/udp"  # RTP (голос)
+      - "${EXTERNAL_SIGNALING_PORT:-5061}:5060/udp"
+      - "${EXTERNAL_SIGNALING_PORT:-5061}:5060/tcp"
+      - "5039:5038/tcp"                 # AMI
+      - "10011-10021:10011-10021/udp"   # RTP
     volumes:
-      # conf/ содержит ШАБЛОНЫ (с ${AMI_PASSWORD} и т.п.) —
-      # entrypoint.sh рендерит их в /etc/asterisk внутри контейнера.
       - ./asterisk/conf:/etc/asterisk-templates:ro
       - asterisk-logs:/var/log/asterisk
       - asterisk-recordings:/recordings
     environment:
       - AMI_PASSWORD=${AMI_PASSWORD:-changeme_ami_pass}
+      - SIP_ALICE_PASSWORD=${SIP_ALICE_PASSWORD:-changeme_alice}
+      - SIP_BOB_PASSWORD=${SIP_BOB_PASSWORD:-changeme_bob}
+      # Адрес, по которому ВАШ софтфон видит эту машину — иначе RTP
+      # (голос) идёт на внутренний docker-IP контейнера и не доходит.
+      # См. комментарий в asterisk/conf/pjsip.conf.
+      - EXTERNAL_MEDIA_ADDRESS=${EXTERNAL_MEDIA_ADDRESS:-127.0.0.1}
+      - EXTERNAL_SIGNALING_PORT=${EXTERNAL_SIGNALING_PORT:-5061}
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 10s
