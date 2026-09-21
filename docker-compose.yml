@@ -1,0 +1,4 @@
+# Этот файл —общая точка сборки для ПОЛНОГО стенда:
+# SIP/VoIP + voice service + STT/TTS + Backend + Frontend + ML + PostgreSQL.
+
+services: {}

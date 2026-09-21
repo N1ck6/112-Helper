@@ -1,0 +1,36 @@
+# Этап 1 — базовая инфраструктура.
+# Запуск:  docker compose -f telephony/stage1_sip_server/docker-compose.yml up --build
+#
+# Этот файл сознательно НЕ переиспользуется другими этапами через
+# `extends`/`include` — каждый этап самодостаточен и продолжает
+# запускаться сам по себе даже после того, как написаны stage2-4
+# (требование "каждый этап доступен для исследования").
+
+services:
+  asterisk:
+    build: ./asterisk
+    container_name: telephony-stage1-asterisk
+    ports:
+      - "5060:5060/udp"   # SIP-сигнализация
+      - "5060:5060/tcp"
+      - "5038:5038/tcp"   # AMI (мониторинг/тесты)
+      - "10000-10010:10000-10010/udp"  # RTP (голос)
+    volumes:
+      # conf/ содержит ШАБЛОНЫ (с ${AMI_PASSWORD} и т.п.) —
+      # entrypoint.sh рендерит их в /etc/asterisk внутри контейнера.
+      - ./asterisk/conf:/etc/asterisk-templates:ro
+      - asterisk-logs:/var/log/asterisk
+      - asterisk-recordings:/recordings
+    environment:
+      - AMI_PASSWORD=${AMI_PASSWORD:-changeme_ami_pass}
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  asterisk-logs:
+  asterisk-recordings:

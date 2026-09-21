@@ -111,7 +111,6 @@ pip-wheel-metadata/
 # ML generated files
 # ============================================================
 
-# Trained models / checkpoints
 ml/checkpoints/
 ml/models/generated/
 
@@ -121,7 +120,6 @@ ml/models/generated/
 *.safetensors
 *.onnx
 
-# ML caches
 ml/cache/
 ml/tmp/
 
@@ -176,7 +174,6 @@ volumes/
 *.dump
 *.backup
 
-# Local PostgreSQL data
 postgres-data/
 database/data/
 
@@ -206,3 +203,6 @@ artifacts/
 *.bak
 *.orig
 *.rej
+info_files/
+claude-logs/
+_to_delete/
