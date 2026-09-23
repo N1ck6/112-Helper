@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Вход · Тренажёр диспетчера ДДС</title>
+  <!-- Применяем сохранённую тему ДО отрисовки страницы, чтобы не было
+       "мигания" неправильной темой при загрузке. Логика переключения —
+       в js/theme.js, подключённом ниже вместе с остальными скриптами. -->
+  <script>
+    (function () {
+      var saved = localStorage.getItem("ddsTheme");
+      var theme = saved || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <button type="button" class="theme-toggle" data-theme-toggle aria-label="Переключить тему">
+    <span class="icon" style="width:16px; height:16px;"></span>
+  </button>
+
+  <div class="login-page">
+
+    <!-- Левая панель: смысловой "герой" экрана — объясняет, что это за продукт -->
+    <section class="hero-panel">
+
+      <div class="hero-brand">
+        <span class="icon" style="--icon-src:url('/assets/icons/misc_phone.png'); width:20px; height:20px;" aria-hidden="true"></span>
+        <p class="hero-kicker">ГБУ «Система 112» · учебный контур</p>
+      </div>
+
+      <h1 class="hero-title">Тренажёр диспетчера ДДС</h1>
+
+      <p class="hero-sub">
+        Обучающийся получает от системы уже заполненную карточку происшествия
+        (эмуляция работы оператора 112), проверяет данные и звонит руководителям
+        служб через симулятор IP‑телефонии — без доступа к внешним сетям.
+      </p>
+
+      <div class="hero-scope">
+        <span class="hero-scope-label">Что нужно фронтенду по ТЗ</span>
+        <ul class="hero-scope-list">
+          <li>веб-интерфейс для трёх ролей: обучающийся, преподаватель, администратор</li>
+          <li>интерфейс, имитирующий систему‑112 / АРМ‑112, в реальном времени</li>
+          <li>русская локализация, единая стилистика, адаптивность под desktop и мобильные устройства</li>
+        </ul>
+      </div>
+
+      <div class="hero-icon" aria-hidden="true">
+        <span class="icon" style="--icon-src:url('/assets/icons/misc_phone.png'); width:34px; height:34px;"></span>
+      </div>
+
+    </section>
+
+    <!-- Правая панель: форма входа с переключением роли -->
+    <section class="auth-panel">
+      <div class="auth-card">
+
+        <div>
+          <h2>Вход в систему</h2>
+          <p class="auth-hint">Выберите роль и введите учётные данные локального профиля.</p>
+        </div>
+
+        <!-- Переключатель роли: чисто фронтенд-состояние, роль передаётся
+             бэкенду вместе с формой, а реальные права всё равно проверяются
+             на сервере (RBAC) — фронтенд не является источником истины.
+             role-switch-indicator — скользящий "ползунок" под активной вкладкой,
+             его позицию и ширину выставляет js/auth.js. -->
+        <div class="role-switch" role="tablist" aria-label="Роль пользователя" id="role-switch">
+          <span class="role-switch-indicator" id="role-indicator"></span>
+          <button type="button" class="role-btn active" data-role="student" role="tab" aria-selected="true">Обучающийся</button>
+          <button type="button" class="role-btn" data-role="teacher" role="tab" aria-selected="false">Преподаватель</button>
+          <button type="button" class="role-btn" data-role="admin" role="tab" aria-selected="false">Администратор</button>
+        </div>
+
+        <form id="login-form" novalidate>
+          <label>
+            Логин
+            <input type="text" name="username" autocomplete="username" required />
+          </label>
+          <label>
+            Пароль
+            <input type="password" name="password" autocomplete="current-password" required />
+          </label>
+
+          <p class="form-error" id="form-error" hidden>Введите логин и пароль</p>
+
+          <button type="submit" class="btn-primary" id="login-submit">Войти</button>
+        </form>
+
+        <p class="auth-footer">ЛОКАЛЬНЫЙ КОНТУР · БЕЗ ДОСТУПА К ВНЕШНИМ СЕТЯМ</p>
+
+      </div>
+    </section>
+
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/theme.js"></script>
+  <script src="js/auth.js"></script>
+</body>
+</html>

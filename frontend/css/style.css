@@ -1,0 +1,1145 @@
+/* =========================================================
+   Тренажёр диспетчера ДДС — базовые стили
+   Палитра и шрифт — по брендбуку презентации (Montserrat +
+   акцентные HEX #FF0053 / #FFD6E4 / #8A83D1 / #FC3777 /
+   #310F53 / #520978, базовые #FFFFFF / #1C1D22).
+   ========================================================= */
+
+:root {
+  /* --- Тёмная база, затонированная фирменным фиолетовым --- */
+  --bg-950: #1c1d22;
+  --panel-900: #241726;
+  --panel-800: #2d1a34;
+  --panel-700: #3a2148;
+  --border-600: #4a2c5c;
+
+  --ink-100: #ffffff;
+  --ink-400: #c9bfe0;
+  --ink-600: #9686b8;
+
+  /* --- Акцентные цвета брендбука --- */
+  --accent-500: #ff0053;
+  --accent-600: #d1003f;
+  --accent-100: #ffd6e4;
+  --lavender-500: #8a83d1;
+  --magenta-500: #fc3777;
+  --purple-900: #310f53;
+  --purple-800: #520978;
+  --purple-800-tint: #b190c2; /* #520978, но читаемо как цвет текста на тёмном фоне */
+
+  --danger-500: #ff5470;
+
+  /* --- Цвета категорий происшествий: отдельные переменные, чтобы можно
+     было подобрать разный контраст для тёмной и светлой темы --- */
+  --cat-nature: var(--magenta-500);
+  --cat-medicine: var(--accent-500);
+  --cat-infrastructure: var(--lavender-500);
+  --cat-security: var(--purple-800-tint);
+  --cat-other: var(--accent-100);
+
+  /* --- Типографика --- */
+  --font-ui: "Montserrat", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* --- Прочее --- */
+  --radius-md: 10px;
+  --radius-lg: 18px;
+  --radius-xl: 26px;
+  --shadow-panel: 0 24px 60px rgba(12, 4, 20, 0.5);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-fast: 150ms ease;
+  --transition-base: 220ms var(--ease-out);
+}
+
+/* =========================================================
+   Светлая тема. Переключается атрибутом data-theme на <html>
+   (см. js/theme.js). Тёмная тема — значения по умолчанию выше,
+   поэтому здесь перечислены только те переменные, которые
+   отличаются, плюс более тёмные варианты цветов категорий —
+   исходные брендовые оттенки слишком светлые для текста на белом.
+   ========================================================= */
+
+:root[data-theme="light"] {
+  --bg-950: #f5f1fa;
+  --panel-900: #ffffff;
+  --panel-800: #f3edf9;
+  --panel-700: #ebe0f7;
+  --border-600: #e3d5f0;
+
+  --ink-100: #1c1d22;
+  --ink-400: #4a3d63;
+  --ink-600: #6f6288;
+
+  --cat-nature: #c52b5d;
+  --cat-medicine: #d90047;
+  --cat-infrastructure: #5a5588;
+  --cat-security: var(--purple-800);
+  --cat-other: #736067;
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  background: var(--bg-950);
+  color: var(--ink-100);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+p {
+  margin: 0;
+  color: var(--ink-600);
+  line-height: 1.5;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Уважаем системную настройку "меньше анимаций" —
+   плавные появления заменяются мгновенными. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* =========================================================
+   Маска-иконка: PNG-иконки из брендового набора подключаются
+   как маска, поэтому цвет иконки всегда задаётся через
+   background-color (можно перекрашивать под категорию).
+   ========================================================= */
+
+.icon {
+  display: inline-block;
+  -webkit-mask-image: var(--icon-src);
+  mask-image: var(--icon-src);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  background-color: currentColor;
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   Кнопки
+   ========================================================= */
+
+.btn-primary,
+.btn-ghost,
+.btn-card {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: transform var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.btn-primary {
+  width: 100%;
+  padding: 14px 20px;
+  background: var(--accent-500);
+  color: #ffffff;
+  font-size: 0.98rem;
+}
+
+.btn-primary:hover {
+  background: var(--accent-600);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-primary[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.btn-ghost {
+  padding: 9px 16px;
+  background: transparent;
+  border: 1px solid var(--border-600);
+  color: var(--ink-400);
+  font-size: 0.88rem;
+}
+
+.btn-ghost:hover {
+  border-color: var(--accent-500);
+  color: var(--ink-100);
+}
+
+.btn-card {
+  padding: 8px 14px;
+  background: var(--panel-700);
+  color: var(--ink-100);
+  font-size: 0.85rem;
+  align-self: flex-start;
+}
+
+.btn-card:hover {
+  background: var(--accent-500);
+}
+
+.btn-card:active,
+.btn-primary:active,
+.btn-ghost:active {
+  transform: scale(0.97);
+}
+
+/* --- переключатель темы --- */
+
+.theme-toggle {
+  border: 1px solid var(--border-600);
+  background: var(--panel-800);
+  color: var(--ink-400);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent-500);
+  color: var(--accent-500);
+}
+
+.theme-toggle:active {
+  transform: scale(0.92);
+}
+
+.theme-toggle .icon {
+  background-color: currentColor;
+}
+
+/* На экране входа кнопка "плавает" в углу — там нет топбара, куда её встроить */
+.login-page .theme-toggle {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 20;
+  background: var(--panel-900);
+}
+
+/* =========================================================
+   Экран входа
+   ========================================================= */
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+}
+
+.hero-panel {
+  position: relative;
+  padding: clamp(32px, 5vw, 72px);
+  background:
+    radial-gradient(circle at 15% 10%, rgba(255, 0, 83, 0.18), transparent 45%),
+    radial-gradient(circle at 90% 90%, rgba(138, 131, 209, 0.16), transparent 50%),
+    linear-gradient(160deg, var(--panel-900), var(--bg-950));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 26px;
+  overflow: hidden;
+}
+
+.hero-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hero-brand .icon {
+  width: 20px;
+  height: 20px;
+  color: var(--accent-500);
+}
+
+.hero-kicker {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-600);
+  text-transform: uppercase;
+}
+
+.hero-title {
+  font-size: clamp(2rem, 4vw, 3rem);
+  max-width: 12ch;
+  color: var(--ink-100);
+  animation: rise-in 500ms var(--ease-out) both;
+}
+
+.hero-sub {
+  max-width: 46ch;
+  font-size: 1.02rem;
+  animation: rise-in 500ms var(--ease-out) 80ms both;
+}
+
+.hero-scope {
+  border-top: 1px solid var(--border-600);
+  padding-top: 20px;
+  animation: rise-in 500ms var(--ease-out) 160ms both;
+  max-width: 46ch;
+}
+
+.hero-scope-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-600);
+  margin-bottom: 10px;
+}
+
+.hero-scope-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hero-scope-list li {
+  position: relative;
+  padding-left: 16px;
+  font-size: 0.9rem;
+  color: var(--ink-400);
+  line-height: 1.5;
+}
+
+.hero-scope-list li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.65em;
+  width: 6px;
+  height: 1.5px;
+  background: var(--accent-500);
+}
+
+.hero-icon {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--panel-800);
+  border: 1px solid var(--border-600);
+  display: grid;
+  place-items: center;
+  align-self: flex-start;
+  animation: rise-in 500ms var(--ease-out) 220ms both;
+}
+
+.hero-icon .icon {
+  width: 34px;
+  height: 34px;
+  color: var(--accent-500);
+}
+
+.auth-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(24px, 4vw, 48px);
+  background: var(--panel-900);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: rise-in 460ms var(--ease-out) 120ms both;
+}
+
+.auth-card h2 {
+  font-size: 1.4rem;
+}
+
+.auth-hint {
+  font-size: 0.88rem;
+}
+
+/* Переключатель роли со скользящим индикатором.
+   position:relative + один абсолютный "ползунок",
+   который двигается через transform (JS выставляет --x/--w). */
+.role-switch {
+  position: relative;
+  display: flex;
+  background: var(--panel-800);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  gap: 4px;
+}
+
+.role-switch-indicator {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 0;
+  width: var(--w, 0px);
+  transform: translateX(var(--x, 0px));
+  background: var(--panel-700);
+  border-radius: 8px;
+  transition: transform var(--transition-base), width var(--transition-base);
+}
+
+.role-btn {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--ink-600);
+  padding: 9px 6px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+  font-family: inherit;
+}
+
+.role-btn.active {
+  color: var(--ink-100);
+}
+
+#login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+#login-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--ink-400);
+}
+
+#login-form input {
+  background: var(--panel-800);
+  border: 1px solid var(--border-600);
+  border-radius: var(--radius-md);
+  padding: 11px 12px;
+  color: var(--ink-100);
+  font-size: 0.95rem;
+  font-family: inherit;
+  transition: border-color var(--transition-fast);
+}
+
+#login-form input:focus {
+  border-color: var(--accent-500);
+  outline: none;
+}
+
+.form-error {
+  color: var(--danger-500);
+  font-size: 0.82rem;
+}
+
+.auth-footer {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-align: center;
+  color: var(--ink-600);
+}
+
+/* =========================================================
+   Экран после входа (дашборд-оболочка)
+   ========================================================= */
+
+.app-shell {
+  min-height: 100vh;
+  background: var(--bg-950);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px clamp(16px, 3vw, 32px);
+  background: var(--panel-900);
+  border-bottom: 1px solid var(--border-600);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-left .icon {
+  width: 20px;
+  height: 20px;
+  color: var(--accent-500);
+}
+
+.topbar-title {
+  font-weight: 700;
+  font-size: 0.98rem;
+}
+
+.topbar-center {
+  display: none;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--font-mono);
+  color: var(--ink-400);
+}
+
+.topbar-clock {
+  font-size: 1.05rem;
+  color: var(--ink-100);
+}
+
+.topbar-date {
+  font-size: 0.78rem;
+  color: var(--ink-600);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.role-badge {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--panel-800);
+  border: 1px solid var(--border-600);
+  color: var(--accent-500);
+}
+
+.dashboard {
+  padding: clamp(20px, 4vw, 44px);
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.dashboard-head {
+  margin-bottom: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-head h1 {
+  font-size: clamp(1.4rem, 3vw, 1.9rem);
+}
+
+.section-title {
+  font-size: 1rem;
+  margin: 36px 0 14px;
+  color: var(--ink-400);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* --- сетка карточек-переходов --- */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  background: var(--panel-900);
+  border: 1px solid var(--border-600);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color var(--transition-base), transform var(--transition-base);
+  opacity: 0;
+  animation: rise-in 420ms var(--ease-out) forwards;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+.card:hover {
+  border-color: var(--accent-500);
+  transform: translateY(-2px);
+}
+
+.card-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--panel-700);
+  display: grid;
+  place-items: center;
+  color: var(--accent-500);
+}
+
+.card-icon .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.card h3 {
+  font-size: 1.02rem;
+}
+
+.card p {
+  font-size: 0.86rem;
+}
+
+/* --- очередь карточек происшествий с категориями --- */
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--panel-900);
+  border: 1px solid var(--border-600);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  color: inherit;
+  font-family: inherit;
+  transition: border-color var(--transition-base), transform var(--transition-base), background var(--transition-base);
+  opacity: 0;
+  animation: rise-in 380ms var(--ease-out) forwards;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+
+.queue-item:hover {
+  border-color: var(--cat-color, var(--accent-500));
+  background: var(--panel-800);
+  transform: translateX(2px);
+}
+
+.queue-badge {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 0, 83, 0.18);
+  background: color-mix(in srgb, var(--cat-color, var(--accent-500)) 22%, transparent);
+}
+
+.queue-badge .icon {
+  width: 22px;
+  height: 22px;
+  color: var(--cat-color, var(--accent-500));
+}
+
+.queue-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.queue-category {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--cat-color, var(--accent-500));
+}
+
+.queue-title {
+  font-size: 0.95rem;
+  color: var(--ink-100);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-address {
+  font-size: 0.82rem;
+  color: var(--ink-600);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-time {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--ink-400);
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   Шторка с карточкой происшествия — "выезжает" снизу на мобильных
+   и справа на широких экранах. Управляется классом .is-open
+   на .sheet-overlay (JS переключает через requestAnimationFrame,
+   чтобы transition отыграл даже при первом открытии).
+   ========================================================= */
+
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 4, 16, 0.6);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-base);
+  z-index: 100;
+}
+
+.sheet-overlay.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sheet {
+  width: 100%;
+  max-width: 480px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--panel-900);
+  border: 1px solid var(--border-600);
+  border-bottom: none;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  padding: 22px clamp(18px, 4vw, 28px) clamp(20px, 4vw, 32px);
+  box-shadow: var(--shadow-panel);
+  transform: translateY(100%);
+  transition: transform 320ms var(--ease-out);
+}
+
+.sheet-overlay.is-open .sheet {
+  transform: translateY(0);
+}
+
+.sheet-handle {
+  width: 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-600);
+  margin: 0 auto 18px;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.sheet-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(255, 0, 83, 0.18);
+  background: color-mix(in srgb, var(--cat-color, var(--accent-500)) 22%, transparent);
+  color: var(--cat-color, var(--accent-500));
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sheet-badge .icon {
+  width: 15px;
+  height: 15px;
+  color: var(--cat-color, var(--accent-500));
+}
+
+.sheet-close {
+  border: none;
+  background: var(--panel-800);
+  color: var(--ink-400);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.sheet-close:hover {
+  background: var(--accent-500);
+  color: #fff;
+}
+
+.sheet-close .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.sheet h2 {
+  font-size: 1.25rem;
+  margin-bottom: 4px;
+}
+
+.sheet-address {
+  font-size: 0.9rem;
+  margin-bottom: 18px;
+}
+
+/* --- таймер приёма карточки: по регламенту на подтверждение
+   получения даётся 30 секунд, при превышении поле "краснеет"
+   (как в реальном ПОВ-112) --- */
+.sheet-timer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: var(--panel-800);
+  border: 1px solid var(--border-600);
+  color: var(--ink-400);
+  font-size: 0.82rem;
+  margin-bottom: 18px;
+  transition: background var(--transition-base), border-color var(--transition-base), color var(--transition-base);
+}
+
+.sheet-timer .icon {
+  background-color: currentColor;
+  width: 14px;
+  height: 14px;
+}
+
+.sheet-timer strong {
+  font-family: var(--font-mono);
+  color: var(--ink-100);
+  margin-left: auto;
+  font-size: 0.92rem;
+}
+
+.sheet-timer.is-warning {
+  border-color: var(--danger-500);
+  color: var(--danger-500);
+  background: rgba(255, 84, 112, 0.12);
+  background: color-mix(in srgb, var(--danger-500) 12%, transparent);
+}
+
+.sheet-timer.is-warning strong {
+  color: var(--danger-500);
+}
+
+.sheet-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.sheet-field {
+  background: var(--panel-800);
+  border: 1px solid var(--border-600);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.sheet-field span {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-600);
+  margin-bottom: 3px;
+}
+
+.sheet-field strong {
+  font-size: 0.9rem;
+  color: var(--ink-100);
+  font-weight: 600;
+}
+
+.sheet-services {
+  margin-bottom: 22px;
+}
+
+.sheet-services h3 {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-600);
+  margin-bottom: 10px;
+}
+
+.service-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel-800);
+  border: 1px solid var(--border-600);
+  border-radius: var(--radius-md);
+  margin-bottom: 8px;
+}
+
+.service-row .icon {
+  width: 16px;
+  height: 16px;
+  color: var(--ink-400);
+}
+
+.service-row span {
+  flex: 1;
+  font-size: 0.88rem;
+}
+
+.service-call {
+  border: none;
+  background: var(--panel-700);
+  color: var(--ink-100);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.service-call:hover {
+  background: var(--accent-500);
+}
+
+.service-call:active {
+  transform: scale(0.92);
+}
+
+.service-call .icon {
+  width: 14px;
+  height: 14px;
+  color: inherit;
+  background-color: currentColor;
+}
+
+.sheet-comment {
+  margin-bottom: 20px;
+}
+
+.sheet-comment label {
+  display: block;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-600);
+  margin-bottom: 8px;
+}
+
+.sheet-comment textarea {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  background: var(--panel-800);
+  border: 1px solid var(--border-600);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  color: var(--ink-100);
+  font-family: inherit;
+  font-size: 0.88rem;
+  transition: border-color var(--transition-fast);
+}
+
+.sheet-comment textarea:focus {
+  border-color: var(--accent-500);
+  outline: none;
+}
+
+.sheet-comment .field-error {
+  display: none;
+  color: var(--danger-500);
+  font-size: 0.78rem;
+  margin-top: 6px;
+}
+
+.sheet-comment.has-error textarea {
+  border-color: var(--danger-500);
+}
+
+.sheet-comment.has-error .field-error {
+  display: block;
+}
+
+.sheet-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.sheet-actions .btn-primary {
+  flex: 1;
+}
+
+.sheet-actions .btn-decline {
+  flex: 1;
+  padding: 14px 20px;
+  border: 1px solid var(--border-600);
+  background: transparent;
+  color: var(--ink-400);
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.sheet-actions .btn-decline:hover {
+  border-color: var(--danger-500);
+  color: var(--danger-500);
+}
+
+/* Короткий "тост" подтверждения звонка — появляется и сам гаснет. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translate(-50%, 12px);
+  background: var(--panel-700);
+  border: 1px solid var(--border-600);
+  color: var(--ink-100);
+  padding: 12px 18px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.toast .icon {
+  width: 15px;
+  height: 15px;
+  color: var(--accent-500);
+}
+
+/* =========================================================
+   Анимации
+   ========================================================= */
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* =========================================================
+   Адаптивность
+   ========================================================= */
+
+@media (min-width: 720px) {
+  .topbar-center {
+    display: flex;
+  }
+}
+
+@media (min-width: 640px) {
+  .sheet-overlay {
+    align-items: center;
+  }
+
+  .sheet {
+    border-radius: var(--radius-xl);
+    border-bottom: 1px solid var(--border-600);
+    transform: translateY(24px) scale(0.98);
+  }
+
+  .sheet-overlay.is-open .sheet {
+    transform: translateY(0) scale(1);
+  }
+
+  .sheet-handle {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .login-page {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-panel {
+    padding-bottom: 48px;
+  }
+}
+
+@media (max-width: 520px) {
+  .auth-card {
+    max-width: none;
+  }
+
+  .role-btn {
+    font-size: 0.72rem;
+  }
+
+  .sheet-grid {
+    grid-template-columns: 1fr;
+  }
+}
