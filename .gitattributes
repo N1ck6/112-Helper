@@ -1,0 +1,6 @@
+# Скрипты и конфиги, которые исполняются в Linux-контейнерах, — всегда LF.
+# С CRLF (core.autocrlf=true на Windows) shebang "#!/bin/sh\r" не находится:
+# Docker healthcheck падал с "exec ... no such file or directory".
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.conf      text eol=lf

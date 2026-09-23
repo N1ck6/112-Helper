@@ -1,6 +1,6 @@
 """
 Показывает список записанных звонков и, если получится, обогащает
-каждую запись данными из sessions.log этапа 3 (scenario_id, session_id) —
+каждую запись данными из sessions.log (scenario_id, session_id) —
 связка идёт по call_id, который совпадает с именем файла (UNIQUEID
 Asterisk без расширения).
 
@@ -16,7 +16,7 @@ SESSIONS_LOG_PATH = Path("/data/sessions.log")
 
 
 def load_call_index() -> dict:
-    """call_id -> {scenario_id, session_id} из call_started событий."""
+    """call_id -> {scenario_id, session_id} из событий начала звонка."""
     index = {}
     if not SESSIONS_LOG_PATH.exists():
         return index
@@ -29,7 +29,8 @@ def load_call_index() -> dict:
                 record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if record.get("event") == "call_started":
+            # call_started — формат этапов 3-5, call.started — этап 6+
+            if record.get("event") in ("call_started", "call.started"):
                 index[record["call_id"]] = {
                     "scenario_id": record.get("scenario_id"),
                     "session_id": record.get("session_id"),
@@ -51,7 +52,10 @@ def main():
         return
 
     call_index = load_call_index()
-    wav_files = sorted(RECORDINGS_DIR.glob("*.wav"))
+    # Полные записи звонков; реплики оператора (<call_id>_opNN) и
+    # ответы этапов 3-5 (response_<call_id>) — части звонка, не отдельные записи.
+    wav_files = sorted(w for w in RECORDINGS_DIR.glob("*.wav")
+                       if "_op" not in w.stem and not w.stem.startswith("response_"))
 
     if not wav_files:
         print("Записей пока нет. Совершите тестовый звонок (см. README этапа 4).")

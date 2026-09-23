@@ -22,7 +22,9 @@ RUN mkdir -p /var/log/asterisk /var/spool/asterisk /recordings \
 
 COPY healthcheck.sh /usr/local/bin/healthcheck.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/healthcheck.sh /usr/local/bin/entrypoint.sh
+# sed: срезать CRLF, если репозиторий склонирован на Windows без .gitattributes
+RUN sed -i 's/\r$//' /usr/local/bin/healthcheck.sh /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/healthcheck.sh /usr/local/bin/entrypoint.sh
 
 EXPOSE 5060/udp 5060/tcp 5038/tcp
 

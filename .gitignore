@@ -123,6 +123,9 @@ ml/models/generated/
 ml/cache/
 ml/tmp/
 
+# Модели STT/TTS (faster-whisper, Piper) — скачиваются download_models.py
+telephony/models/
+
 
 # ============================================================
 # Runtime / temporary data
@@ -203,6 +206,6 @@ artifacts/
 *.bak
 *.orig
 *.rej
-info_files/
+docs/
 claude-logs/
 _to_delete/
