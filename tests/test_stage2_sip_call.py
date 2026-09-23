@@ -2,7 +2,7 @@
 Тест этапа 2 — SIP-звонок / dialplan срабатывает, без реального софтфона.
 
 Запуск:
-    docker compose -f telephony/docker-compose.yml up --build -d
+    cd telephony && docker compose up --build -d
     pytest tests/test_stage2_sip_call.py -v
 
 Как это работает без второго участника звонка:
@@ -16,8 +16,8 @@ AMI Originate с Channel="Local/600@internal" создаёт "виртуальн
 """
 
 
-def test_echo_extension_is_reachable(ami_stage2):
-    events = ami_stage2.originate_and_wait_hangup(
+def test_echo_extension_is_reachable(ami):
+    events = ami.originate_and_wait_hangup(
         channel="Local/600@internal",
         Application="NoOp",
         timeout_s=10.0,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import socket
 import time
+import uuid
 
 
 class AMIError(RuntimeError):
@@ -52,12 +53,21 @@ class AMIClient:
         return block
 
     def send_action(self, action: str, **fields) -> dict:
-        lines = [f"Action: {action}"]
+        """Отправляет действие и ждёт ответ с тем же ActionID.
+
+        Между ответами AMI присылает асинхронные события (FullyBooted,
+        события звонков) — их пропускаем, иначе событие примется за ответ.
+        """
+        action_id = uuid.uuid4().hex
+        lines = [f"Action: {action}", f"ActionID: {action_id}"]
         for key, value in fields.items():
             lines.append(f"{key}: {value}")
         payload = "\r\n".join(lines) + "\r\n\r\n"
         self.sock.sendall(payload.encode("utf-8"))
-        return self._read_block()
+        while True:
+            block = self._read_block()
+            if block.get("ActionID") == action_id and "Response" in block:
+                return block
 
     def login(self, username: str, secret: str):
         resp = self.send_action("Login", Username=username, Secret=secret)
