@@ -1,7 +1,7 @@
 """CLI для проверки движков напрямую, без HTTP.
 
     python -m voice.cli stt /recordings/response_<call_id>.wav
-    python -m voice.cli tts "Помогите, пожар!" -o /tts/test.wav
+    python -m voice.cli tts "Помогите, пожар!" -o /tts/test.wav [--voice male]
 Движки — из STT_ENGINE / TTS_ENGINE (как у сервиса).
 """
 
@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     p_tts.add_argument("text")
     p_tts.add_argument("-o", "--output", type=Path, required=True)
     p_tts.add_argument("--rate", type=int, default=None, help="частота WAV (по умолчанию TTS_SAMPLE_RATE)")
+    p_tts.add_argument("--voice", default=None, help="male | female | имя голоса")
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
@@ -42,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         engine = create_tts(settings)
         engine.load()
-        result = engine.synthesize(args.text, args.rate or settings.tts_sample_rate)
+        result = engine.synthesize(args.text, args.rate or settings.tts_sample_rate, args.voice)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_bytes(result.wav)
         print(json.dumps({"output": str(args.output), "engine": result.engine,

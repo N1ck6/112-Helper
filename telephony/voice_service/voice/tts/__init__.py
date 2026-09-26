@@ -15,5 +15,6 @@ def create_tts(settings: Settings) -> TTSEngine:
         return MockTTS()
     if name == "piper":
         from .piper_engine import PiperTTS
-        return PiperTTS(voice=settings.piper_voice, models_dir=settings.models_dir)
+        return PiperTTS(voice=settings.piper_voice, models_dir=settings.models_dir,
+                        aliases=settings.voice_aliases())
     raise ValueError(f"неизвестный TTS_ENGINE={name!r}, доступны: {', '.join(TTS_ENGINES)}")

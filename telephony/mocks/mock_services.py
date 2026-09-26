@@ -4,14 +4,13 @@
 интеграции меняются только ML_API_URL / BACKEND_URL у virtual-caller.
 
     GET  /health
-    POST /ml/dialogue/turn           следующая реплика абонента (по ключевым словам сценария)
+    POST /ml/dialogue/turn           следующая реплика собеседника (ml_dialogue.py: правила или LLM)
     GET  /ml/scenarios               список сценариев заглушки
     POST /backend/telephony/events   приём событий звонка (webhook)
     GET  /backend/telephony/events   просмотр принятых: ?call_id=&session_id=&event=&limit=
 
-Логика ML намеренно простая: реплика = факты сценария, о которых спросил
-оператор; ключевые слова завершения -> прощание и end_call. Это не модель,
-а предсказуемый собеседник для проверки голосового цикла.
+Логика реплик — в ml_dialogue.py: правила по типу звонка (dispatch, report,
+applicant, incident_112) или OpenAI-совместимая LLM (DIALOGUE_ENGINE=llm).
 """
 
 import json
@@ -24,6 +23,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+from ml_dialogue import DialogueError, LLMConfig, dialogue_turn, next_turn  # noqa: F401 (dialogue_turn — для тестов)
 
 log = logging.getLogger("mocks")
 
@@ -46,54 +47,6 @@ def load_scenarios(directory: Path = SCENARIOS_DIR) -> dict[str, dict]:
             data = json.load(f)
         scenarios[data.get("scenario_id", path.stem)] = data
     return scenarios
-
-
-def _matches(text: str, keywords: list[str]) -> bool:
-    return any(k in text for k in keywords)
-
-
-def dialogue_turn(scenario: dict, turn: int, history: list[dict], operator_text: str | None) -> dict:
-    """Stateless: всё состояние разговора восстанавливается из history."""
-    if turn == 0 or operator_text is None:
-        return {"reply_text": scenario["opening"], "end_call": False}
-
-    caller_said = [h.get("text", "") for h in history if h.get("role") == "caller"]
-    operator_said = [h.get("text", "") for h in history if h.get("role") == "operator"]
-    facts = scenario.get("facts", [])
-    given = {f["id"] for f in facts if any(f["reply"] in said for said in caller_said)}
-
-    if turn >= scenario.get("max_turns", 10) - 1:
-        return {"reply_text": scenario.get("timeout_reply", "Всё, до свидания."), "end_call": True}
-
-    text = operator_text.strip().lower()
-    if not text:
-        # оператор молчит: после двух подряд «пустых» ответов абонент кладёт трубку
-        silent_before = len(operator_said) >= 2 and not operator_said[-2].strip()
-        if silent_before:
-            return {"reply_text": scenario.get("silence_hangup", "Вас не слышно."), "end_call": True}
-        return {"reply_text": scenario.get("silence", "Алло?"), "end_call": False}
-
-    parts = []
-    for fact in facts:
-        if _matches(text, fact["keywords"]):
-            parts.append(fact["reply"])
-            given.add(fact["id"])
-
-    end_call = False
-    if _matches(text, scenario.get("closing_keywords", [])) and turn >= scenario.get("min_turns_before_closing", 1):
-        missing = [f for f in facts if f["id"] in scenario.get("required_before_closing", []) and f["id"] not in given]
-        if missing:
-            parts.append("Подождите! " + missing[0]["reply"])
-        else:
-            parts.append(scenario.get("closing", "Спасибо."))
-            end_call = True
-
-    if not parts:
-        fallbacks = scenario.get("fallbacks") or ["Повторите, пожалуйста."]
-        used = sum(1 for said in caller_said if said in fallbacks)
-        parts.append(fallbacks[used % len(fallbacks)])
-
-    return {"reply_text": " ".join(parts), "end_call": end_call}
 
 
 # ------------------------------------------------------------- Backend ---
@@ -122,6 +75,7 @@ class EventStore:
 class MockHandler(BaseHTTPRequestHandler):
     scenarios: dict[str, dict] = {}
     store: EventStore
+    llm: LLMConfig | None = None
     server_version = "telephony-mocks/1.0"
 
     def _json(self, status: HTTPStatus, data) -> None:
@@ -160,18 +114,19 @@ class MockHandler(BaseHTTPRequestHandler):
     def _route(self, method: str, path: str, query: dict):
         q = {k: v[0] for k, v in query.items()}
         if method == "GET" and path in ("/health", "/ml/health", "/backend/health"):
-            return HTTPStatus.OK, {"status": "ok", "scenarios": sorted(self.scenarios)}
+            return HTTPStatus.OK, {"status": "ok", "scenarios": sorted(self.scenarios),
+                                   "dialogue_engine": f"llm:{self.llm.model}@{self.llm.api_url}" if self.llm else "rules"}
         if method == "GET" and path == "/ml/scenarios":
             return HTTPStatus.OK, [{"scenario_id": k, "title": v.get("title")} for k, v in self.scenarios.items()]
         if method == "POST" and path == "/ml/dialogue/turn":
             req = self._read_json()
-            scenario = self.scenarios.get(str(req.get("scenario_id")))
-            if scenario is None:
-                raise MockError(HTTPStatus.NOT_FOUND, f"сценарий {req.get('scenario_id')} не найден")
-            reply = dialogue_turn(scenario, int(req.get("turn", 0)), req.get("history") or [],
-                                  req.get("operator_text"))
-            log.info("ML call_id=%s turn=%s оператор=%r -> %r end=%s", req.get("call_id"), req.get("turn"),
-                     req.get("operator_text"), reply["reply_text"], reply["end_call"])
+            try:
+                reply = next_turn(req, self.scenarios, self.llm)
+            except DialogueError as exc:
+                raise MockError(HTTPStatus.NOT_FOUND, str(exc)) from exc
+            log.info("ML %s call_id=%s turn=%s оператор=%r -> %r end=%s [%s]", req.get("call_type"),
+                     req.get("call_id"), req.get("turn"), req.get("operator_text"), reply["reply_text"],
+                     reply["end_call"], reply.get("engine"))
             return HTTPStatus.OK, reply
         if path == "/backend/telephony/events":
             if method == "POST":
@@ -188,9 +143,9 @@ class MockHandler(BaseHTTPRequestHandler):
 
 
 def make_server(host: str, port: int, scenarios: dict | None = None,
-                store: EventStore | None = None) -> ThreadingHTTPServer:
+                store: EventStore | None = None, llm: LLMConfig | None = None) -> ThreadingHTTPServer:
     attrs = {"scenarios": scenarios if scenarios is not None else load_scenarios(),
-             "store": store or EventStore()}
+             "store": store or EventStore(), "llm": llm}
     server = ThreadingHTTPServer((host, port), type("BoundMockHandler", (MockHandler,), attrs))
     server.daemon_threads = True
     return server
@@ -200,8 +155,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     host = os.environ.get("LISTEN_HOST", "0.0.0.0")
     port = int(os.environ.get("LISTEN_PORT", "8093"))
-    server = make_server(host, port)
-    log.info("mocks слушают %s:%d: ML /ml, Backend /backend, сценарии: %s", host, port,
+    llm = LLMConfig.from_env()
+    server = make_server(host, port, llm=llm)
+    log.info("mocks слушают %s:%d: ML /ml (%s), Backend /backend, сценарии: %s", host, port,
+             f"LLM {llm.model} @ {llm.api_url}" if llm else "правила",
              ", ".join(sorted(server.RequestHandlerClass.scenarios)))
     try:
         server.serve_forever()

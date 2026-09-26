@@ -19,7 +19,8 @@ class FasterWhisperSTT(STTEngine):
     name = "faster_whisper"
 
     def __init__(self, model: str, models_dir: Path, device: str = "cpu",
-                 compute_type: str = "int8", beam_size: int = 5, language: str | None = "ru"):
+                 compute_type: str = "int8", beam_size: int = 5, language: str | None = "ru",
+                 workers: int = 1):
         self.model_ref = model
         self.models_dir = Path(models_dir)
         self.device = device
@@ -27,9 +28,11 @@ class FasterWhisperSTT(STTEngine):
         self.beam_size = beam_size
         self.default_language = language
         self._model = None
-        # CTranslate2-модель потокобезопасна не для всех конфигураций —
-        # для MVP сериализуем запросы, это проще и предсказуемее.
-        self._lock = threading.Lock()
+        self.workers = max(1, workers)
+        # num_workers=N у WhisperModel даёт N параллельных распознаваний из разных
+        # потоков; семафор не пускает больше — остальные звонки ждут очереди,
+        # а не делят CPU до неразборчивости.
+        self._slots = threading.BoundedSemaphore(self.workers)
 
     def model_path(self) -> Path:
         p = Path(self.model_ref)
@@ -46,8 +49,8 @@ class FasterWhisperSTT(STTEngine):
         except ImportError as exc:
             raise EngineNotReady(f"пакет faster-whisper не установлен: {exc}") from exc
         log.info("Загрузка faster-whisper: %s device=%s compute=%s", path, self.device, self.compute_type)
-        self._model = WhisperModel(str(path), device=self.device,
-                                   compute_type=self.compute_type, local_files_only=True)
+        self._model = WhisperModel(str(path), device=self.device, compute_type=self.compute_type,
+                                   num_workers=self.workers, local_files_only=True)
 
     def transcribe(self, wav: bytes, language: str | None = None) -> STTResult:
         if self._model is None:
@@ -57,7 +60,7 @@ class FasterWhisperSTT(STTEngine):
         pcm, rate = read_pcm16_mono(wav)
         audio = io.BytesIO(pcm16_to_wav(pcm, rate))
         lang = language or self.default_language
-        with self._lock:
+        with self._slots:
             segments_iter, info = self._model.transcribe(
                 audio, language=lang, beam_size=self.beam_size, vad_filter=True)
             segments = [Segment(round(s.start, 3), round(s.end, 3), s.text.strip()) for s in segments_iter]

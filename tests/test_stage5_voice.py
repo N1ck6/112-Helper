@@ -202,3 +202,35 @@ def test_integration_tts_stt_roundtrip(remote_health):
     assert text
     if remote_health["stt"]["engine"] != "mock" and remote_health["tts"]["engine"] != "mock":
         assert "пожар" in text.lower(), f"STT не распознал синтезированную фразу: {text!r}"
+
+
+# ------------------------------------------- голоса, кэш, нормализация ---
+
+def test_tts_voice_and_cache(local_api):
+    url, settings = local_api
+    payload = {"text": "Слушаю вас", "voice": "male", "cache": True}
+    status, _, body = _post_json(f"{url}/tts", payload)
+    first = json.loads(body)
+    assert status == 200 and "cache_male_" in first["asterisk_sound"]
+    status, _, body = _post_json(f"{url}/tts", payload)
+    second = json.loads(body)
+    assert second["path"] == first["path"] and second["engine"] == "cache" and second["processing_sec"] == 0.0
+    # другой голос — другой файл; мужской mock-голос ниже тоном, но той же длины
+    status, _, body = _post_json(f"{url}/tts", {**payload, "voice": "female"})
+    assert json.loads(body)["path"] != first["path"]
+    assert _post_json(f"{url}/tts", {"text": "x", "voice": "../evil"})[0] == 400
+
+
+def test_mock_tts_voices_differ():
+    male = MockTTS().synthesize("проверка", 8000, "male").wav
+    female = MockTTS().synthesize("проверка", 8000, "female").wav
+    assert male != female and len(male) == len(female)
+
+
+def test_text_normalization_for_addresses():
+    from voice.textnorm import normalize_for_tts
+    assert normalize_for_tts("Москва, ул. Ясный проезд, д. 10, кв. 5") == \
+        "Москва, улица Ясный проезд, дом 10, квартира 5"
+    assert normalize_for_tts("Тверской б-р, 14") == "Тверской бульвар, 14"
+    assert normalize_for_tts("Шоссейная ул., 62") == "Шоссейная улица, 62"
+    assert normalize_for_tts("Помогите! Пожар.") == "Помогите! Пожар."

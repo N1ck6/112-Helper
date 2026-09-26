@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 WORKDIR /app
-COPY mock_services.py .
+COPY mock_services.py ml_dialogue.py ./
 COPY scenarios ./scenarios
 
 # Заглушки ML (/ml) и Backend (/backend) на одном порту — см. mock_services.py

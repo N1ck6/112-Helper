@@ -1,204 +1,244 @@
-# Telephony API — контракт для Backend, ML и Frontend
+# Telephony API — контракт для Frontend, Backend и ML
 
-Всё, что нужно знать другим ролям о телефонии, без чтения кода.
-Формат обмена — JSON (UTF-8). Все адреса задаются переменными окружения,
-поэтому подключение = поменять URL в `.env`.
+Всё, что нужно другим ролям о телефонии, без чтения кода. Обмен — JSON (UTF-8).
+Адреса сервисов задаются в `.env`, подключение = смена URL.
 
 ```
- Backend ──POST /calls──────────────► virtual-caller :8092 ──AMI──► Asterisk ──SIP/RTP──► телефон обучающегося
-    ▲                                        │   ▲
-    │ POST {BACKEND_URL}/telephony/events    │   │ FastAGI 4573 (голосовой цикл)
-    └────────────────────────────────────────┘   │
-                                                 ├──► voice-service :8091  (STT / TTS)
- ML ◄──POST {ML_API_URL}/dialogue/turn───────────┘
+ Frontend (браузер) ──HTTP + SSE (CORS)──┐
+ Backend ────────────POST /calls─────────┤
+                                         ▼
+                      virtual-caller :8092 ──AMI──► Asterisk ──SIP/RTP──► телефон рабочего места (ws01…)
+                         │   ▲  FastAGI                 (софтфон / IP-телефон / гарнитура)
+      POST {BACKEND_URL}/telephony/events               
+                         │   ├──► voice-service :8091  (STT / TTS, мужской и женский голос)
+ ML ◄─POST {ML_API_URL}/dialogue/turn
 ```
 
-| Сервис | Порт (хост) | Кто вызывает |
+| Сервис | Порт хоста | Кто вызывает |
 |---|---|---|
-| virtual-caller — API звонков | 8092 | Backend |
-| voice-service — STT/TTS | 8091 | virtual-caller (и кто угодно для проверки) |
-| audio-tools — записи | 8090 | Backend/Frontend (скачать/проиграть запись) |
-| mocks — заглушки ML и Backend | 8093 | virtual-caller, пока нет настоящих сервисов |
+| virtual-caller — API звонков, SSE | 8092 | Frontend, Backend |
+| voice-service — STT/TTS | 8091 | virtual-caller |
+| audio-tools — записи | 8090 | Frontend/Backend (проиграть или скачать запись) |
+| mocks — заглушки ML (`/ml`) и Backend (`/backend`) | 8093 | virtual-caller, пока нет настоящих |
 
 ## Идентификаторы
 
 | Поле | Кто создаёт | Что это |
 |---|---|---|
-| `session_id` | Backend | Учебная сессия (занятие/карточка). Передаётся в `POST /calls`; если не передан — генерирует телефония. Формат `[A-Za-z0-9_.-]{1,64}` |
-| `scenario_id` | ML/Backend | Сценарий происшествия. Телефония его не интерпретирует, только передаёт в ML. Тот же формат |
-| `call_id` | Телефония | Звонок = UNIQUEID канала Asterisk. Имя файла записи, ключ всех событий |
+| `trainee` | Backend/Frontend | рабочее место = SIP-аккаунт телефона (`ws01`…`ws20`) |
+| `session_id` | Backend | учебная сессия (занятие). `[A-Za-z0-9_.-]{1,64}`; нет — генерирует телефония |
+| `card` | Backend | карточка происшествия (объект, поля ниже); телефония не валидирует, передаёт в ML |
+| `scenario_id` | ML/Backend | сценарий вводных для `incident_112` |
+| `call_id` | Телефония | звонок = UNIQUEID канала Asterisk; имя записи, ключ событий |
 
-Один `session_id` может иметь несколько звонков (повторный дозвон).
+Поля `card`, которые использует телефония (остальные передаются как есть): `id`, `title`,
+`address`, `caller` (имя заявителя — по нему выбирается голос), `caller_gender` (`male`/`female`,
+необязательно), `phone`, `description`, `services` (названия служб).
+
+## Типы звонков
+
+| `call_type` | Кто → кому | Собеседник | Голос |
+|---|---|---|---|
+| `dispatch` | диспетчер ДДС → служба | дежурный службы из справочника | по справочнику |
+| `report` | старший группы → диспетчер ДДС | `leader` службы из справочника | по справочнику |
+| `applicant` | диспетчер ДДС → заявитель карточки | заявитель (`card.caller`) | по имени |
+| `incident_112` | заявитель → оператор 112 | заявитель из сценария | женский |
+
+С телефона рабочего места: `2XXX` — служба (`dispatch`), `3000` — заявитель открытой карточки,
+`700`/`701` — вызов 112 по сценарию, `600` — эхо-тест.
 
 ---
 
-## 1. API звонков (virtual-caller, `:8092`)
+## 1. API телефонии (virtual-caller, `:8092`)
 
-### `POST /calls` — позвонить обучающемуся
+CORS: `Access-Control-Allow-Origin: CORS_ORIGINS` (по умолчанию `*`), preflight `OPTIONS` поддержан.
+Ошибки: `{"error": "текст"}` с кодами `400` (валидация), `404`, `409`, `502` (Asterisk), `500`.
 
-Система звонит на SIP-аккаунт обучающегося; после ответа с ним говорит виртуальный абонент по сценарию.
+### `GET /directory` — справочник служб
 
 ```json
-{"scenario_id": "scenario_001", "trainee": "alice", "session_id": "b7c1e0d2"}
+[{"number": "2101", "id": "mchs_101", "service": "Служба 101 (МЧС)",
+  "name": "Петров Андрей", "position": "Старший диспетчер ЦУКС", "gender": "male"}, …]
 ```
+Службу в `POST /calls` можно указать номером, `id` или названием из карточки:
+«Служба 101 (МЧС)», «ОМВД», «Упр. района», «Мосводоканал» и т.п. (поиск по `aliases`).
+Источник — `virtual_caller/directory.json` (добавить службу = добавить объект).
 
-| Поле | Обяз. | |
+### `PUT /trainees/{trainee}/context` — что открыто на рабочем месте
+
+Frontend/Backend сообщает при открытии карточки; нужно для звонков, которые обучающийся
+набирает с телефона сам (2XXX, 3000), и как значение по умолчанию для `POST /calls`.
+```json
+{"session_id": "s-42", "card": {"id": "913126", "title": "Пожар: мусор на улице",
+ "address": "Москва, ул. Ясный проезд, 10", "caller": "Александр А., очевидец", "services": ["Служба 101 (МЧС)"]}}
+```
+`GET` — текущий контекст (`404`, если нет), `DELETE` — сбросить (карточка закрыта).
+
+### `POST /calls` — учебный звонок
+
+Телефония звонит на телефон рабочего места; после ответа говорит собеседник.
+Для `dispatch`/`applicant` обучающийся «звонит кнопкой»: берёт трубку своего телефона, слышит
+гудки (`RINGBACK_SEC`), затем «Слушаю вас».
+
+| Поле | Для | |
 |---|---|---|
-| `scenario_id` | да | |
-| `trainee` | да* | SIP-аккаунт обучающегося (сейчас `alice`, `bob`) |
-| `session_id` | нет | если нет — сгенерируется |
-| `channel` | нет* | вместо `trainee`, для тестов: `PJSIP/<аккаунт>` или `Local/<exten>@<context>` |
-
-Ответ `202 Accepted` сразу, дозвон идёт в фоне:
+| `call_type` | все | `dispatch` / `report` / `applicant` / `incident_112` (по умолчанию) |
+| `trainee` | все | SIP-аккаунт рабочего места (`ws01`) |
+| `service` или `contact` | dispatch, report | название службы из карточки, номер или id |
+| `card`, `session_id` | все, необяз. | по умолчанию — из контекста рабочего места |
+| `report` | report, необяз. | `{"status": "arrival" \| "in_progress" \| "completed" \| "refused", "text": "свой текст"}` |
+| `scenario_id` | incident_112 | сценарий ML |
+| `channel` | тесты | вместо `trainee`: `Local/9001@autotest` — имитация рабочего места |
 
 ```json
-{"call_id": "4f0c…", "session_id": "b7c1e0d2", "scenario_id": "scenario_001",
- "direction": "outbound", "trainee": "alice", "channel": null, "status": "dialing",
- "reason": null, "created_at": 1790000000.1, "answered_at": null, "ended_at": null,
- "duration_sec": 0.0, "recording_url": null, "transcript": []}
+{"call_type": "dispatch", "trainee": "ws01", "service": "Служба 101 (МЧС)"}
 ```
+Ответ `202` сразу (дозвон в фоне) — объект звонка:
+```json
+{"call_id": "4f0c…", "session_id": "s-42", "scenario_id": "", "direction": "outbound", "trainee": "ws01",
+ "call_type": "dispatch", "persona": {"id": "mchs_101", "number": "2101", "service": "Служба 101 (МЧС)",
+ "name": "Петров Андрей", "position": "Старший диспетчер ЦУКС", "gender": "male", "accept": "…"},
+ "card": {…}, "report": null, "channel": null, "status": "dialing", "reason": null,
+ "created_at": 1790000000.1, "answered_at": null, "ended_at": null, "duration_sec": 0.0,
+ "recording_url": null, "transcript": []}
+```
+На экране телефона обучающегося: `dispatch` — «Служба 101 (МЧС)», `report` — «Мастер аварийной
+бригады (Мосводоканал)», `applicant` — «Заявитель: …».
 
-### `GET /calls/{call_id}` — состояние звонка
+### `GET /calls/{call_id}`, `GET /calls?trainee=&session_id=`
 
-Тот же объект. Статусы:
-
-| `status` | Значение |
+| `status` | |
 |---|---|
-| `dialing` | идёт дозвон |
-| `in_progress` | обучающийся ответил, идёт разговор |
-| `ended` | разговор завершён, `reason` — почему |
-| `failed` | не дозвонились, `reason` — почему |
+| `dialing` | звонит телефон рабочего места |
+| `in_progress` | разговор идёт |
+| `ended` | `reason`: `completed`, `operator_hangup`, `max_turns`, `max_duration`, `ml_error`, `unknown_number`, `internal_error` |
+| `failed` | `reason`: `no_answer`, `busy`, `rejected`, `unavailable` (телефон не зарегистрирован), `congestion`, `timeout`, `ami_error` |
 
-`reason` для `failed`: `no_answer`, `busy`, `rejected`, `unavailable` (аккаунт не зарегистрирован), `congestion`, `timeout`, `ami_error`.
-`reason` для `ended`: `completed` (абонент закончил разговор), `operator_hangup`, `max_turns`, `max_duration`, `ml_error`, `internal_error`.
+`transcript`: `{"turn": 0, "role": "caller" | "operator", "text": "...", "audio": "/tts/….wav" | "/recordings/….wav"}`
+(`caller` — собеседник, `operator` — обучающийся; пустой `text` у operator — молчал / не распознано).
 
-`transcript` — реплики по порядку: `{"turn": 0, "role": "caller" | "operator", "text": "...", "audio": "/tts/….wav" | "/recordings/….wav"}`.
+### `POST /calls/{call_id}/hangup` — завершить (`202`; `409` — уже завершён)
 
-### `POST /calls/{call_id}/hangup` — завершить звонок
-
-`202` + объект звонка. `409`, если звонок уже завершён. Итог придёт событием `call.ended` (`reason: operator_hangup`).
-
-### `GET /calls` — последние 500 звонков (новые первыми)
-
-### `GET /endpoints` — SIP-аккаунты
-
+### `GET /endpoints` — телефоны рабочих мест
 ```json
-[{"endpoint": "alice", "state": "Not in use", "registered": true, "active_channels": ""}]
+[{"endpoint": "ws01", "state": "Not in use", "registered": true, "active_channels": ""}, …]
 ```
+
+### `GET /events?trainee=ws01` — поток событий в браузер (Server-Sent Events)
+
+Фильтры: `trainee`, `session_id`, `call_id`. Формат — `event: <тип>` + `data: <JSON события>` (п. 2),
+каждые 15 с комментарий-пинг. Реплика собеседника приходит в момент, когда начинает звучать.
 
 ### `GET /health`
-
-`200` если Asterisk (AMI) доступен, иначе `503`:
 ```json
 {"status": "ok", "ami": true, "voice_service": true, "ml_api_url": "http://mocks:8093/ml",
- "backend_url": "http://mocks:8093/backend", "active_calls": 0}
+ "backend_url": "http://mocks:8093/backend", "directory_contacts": 10, "active_calls": 0}
 ```
-
-Ошибки всех методов: `{"error": "текст"}` с кодом `400` (валидация), `404`, `409`, `502` (AMI), `500`.
-
-### Входящий учебный вызов
-
-Обучающийся может и сам набрать номер сценария: `700` → `scenario_001`, `701` → `scenario_002`.
-Такой звонок появляется в `GET /calls` с `direction: "inbound"` и новым `session_id`; события те же.
 
 ---
 
-## 2. События звонка → Backend (webhook)
+## 2. События звонка → Backend (webhook) и SSE
 
-Телефония делает `POST {BACKEND_URL}/telephony/events` на каждое событие (одно событие — один запрос).
-Backend отвечает любым `2xx`. При ошибке — повторы через 0.5, 1, 2, 5 с, затем событие остаётся только
-в журнале `data/sessions/sessions.log` (JSON Lines, те же объекты). Порядок событий одного звонка сохраняется.
-`BACKEND_URL` пустой — только журнал.
+`POST {BACKEND_URL}/telephony/events` на каждое событие; ответ `2xx`. Повторы через 0.5, 1, 2, 5 с,
+иначе событие остаётся в `data/sessions/sessions.log` (JSON Lines, те же объекты). Порядок сохраняется.
 
-Общие поля: `event`, `timestamp` (ISO 8601, UTC), `call_id`, `session_id`, `scenario_id`.
+Общие поля: `event`, `timestamp` (ISO 8601 UTC), `call_id`, `session_id`, `scenario_id`, `call_type`, `trainee`.
 
 | `event` | Когда | Доп. поля |
 |---|---|---|
-| `call.dialing` | принят `POST /calls` | `trainee`, `channel` |
-| `call.failed` | не дозвонились | `trainee`, `reason` |
-| `call.started` | обучающийся ответил (или сам набрал 7xx) | `direction`, `trainee`, `channel`, `caller_id` |
-| `call.utterance` | прозвучала реплика | `turn`, `role` (`caller`/`operator`), `text`, `audio`, `latency` |
-| `call.error` | сбой внешнего сервиса, звонок продолжается или завершается | `stage` (`ml`/`tts`/`stt`/`internal`), `error` |
-| `call.ended` | конец разговора | `reason`, `duration_sec`, `recording_url`, `transcript` (весь разговор) |
+| `call.dialing` | принят `POST /calls` | `channel`, `persona` (service, name, position, number) |
+| `call.failed` | не дозвонились | `reason` |
+| `call.started` | разговор начался | `direction`, `channel`, `caller_id`, `persona`, `card_id` |
+| `call.utterance` | реплика | `turn`, `role`, `text`, `audio`, `latency` (`ml_sec`, `tts_sec` / `stt_sec`) |
+| `call.error` | сбой сервиса | `stage` (`ml`/`tts`/`stt`/`internal`), `error` |
+| `call.ended` | конец | `reason`, `duration_sec`, `recording_url`, `persona`, `card_id`, `transcript` |
 
-Пример:
-```json
-{"event": "call.utterance", "timestamp": "2026-09-23T15:04:05.123+00:00",
- "call_id": "4f0c…", "session_id": "b7c1e0d2", "scenario_id": "scenario_001",
- "turn": 0, "role": "operator", "text": "Назовите адрес", "audio": "/recordings/4f0c…_op00.wav",
- "latency": {"stt_sec": 1.42}}
-```
-
-`turn` — номер шага: реплика абонента `turn: N` и ответ оператора на неё тоже `turn: N`.
-`role: "operator"` с пустым `text` — оператор молчал или речь не распознана.
-Для Frontend: `call.dialing` → «входящий звонок», `call.started` → «разговор», `call.ended`/`call.failed` → «завершён».
+Для Backend: `call.ended` — готовая «отработка» карточки (служба = `persona.service`, кто принял =
+`persona.name`, суть = `transcript`, время, запись). Для оценки ML — `transcript` доклада диспетчера.
 
 ---
 
-## 3. ML: следующая реплика абонента
+## 3. ML: реплика собеседника
 
-Телефония вызывает `POST {ML_API_URL}/dialogue/turn` на каждом шаге разговора. API **без состояния**:
-вся история приходит в запросе.
+`POST {ML_API_URL}/dialogue/turn` на каждом шаге. API **без состояния**: вся история в запросе.
 
 ```json
 {
-  "session_id": "b7c1e0d2",
-  "scenario_id": "scenario_001",
-  "call_id": "4f0c…",
+  "session_id": "s-42", "scenario_id": "", "call_id": "4f0c…",
+  "call_type": "dispatch",
+  "persona": {"id": "mchs_101", "number": "2101", "service": "Служба 101 (МЧС)", "name": "Петров Андрей",
+              "position": "Старший диспетчер ЦУКС", "gender": "male", "accept": "Я вас понял, информация принята…"},
+  "context": {"card": {…}, "report": null, "trainee": "ws01"},
   "turn": 1,
-  "history": [
-    {"role": "caller", "text": "Алло! Помогите, у меня в квартире пожар!"},
-    {"role": "operator", "text": "Назовите адрес"}
-  ],
-  "operator_text": "Назовите адрес"
+  "history": [{"role": "caller", "text": "Старший диспетчер ЦУКС Петров, слушаю вас."},
+              {"role": "operator", "text": "Возгорание мусора, Ясный проезд, дом десять…"}],
+  "operator_text": "Возгорание мусора, Ясный проезд, дом десять…"
 }
 ```
+- `turn: 0`, `operator_text: null` — начало: первая фраза собеседника («Слушаю вас», доклад, «Алло?»).
+- `history` включает последнюю реплику оператора; `operator_text` дублирует её; `""` — молчание.
+- Ответ: `{"reply_text": "…", "end_call": false}` — текст озвучивается голосом `persona.gender`;
+  `end_call: true` — собеседник кладёт трубку после реплики. Лишние поля игнорируются.
+- Нужен быстрый ответ (цель < 2 с; таймаут 30 с). Ошибка → звонок завершается (`ml_error`).
+- Сокращения адресов («ул.», «д.») раскрываются перед синтезом — ML может отдавать адрес как в карточке.
 
-- `turn` — номер реплики абонента, с 0.
-- `turn: 0`, `operator_text: null`, `history: []` — начало звонка: вернуть первую фразу абонента.
-- `history` включает и последнюю реплику оператора; `operator_text` дублирует её для удобства.
-- `operator_text: ""` — оператор молчал или речь не распознана.
-
-Ответ:
-```json
-{"reply_text": "Улица Ленина, дом пять, квартира двенадцать.", "end_call": false}
+Эталон — `mocks/ml_dialogue.py`: правила по `call_type` (приветствие, переспрос адреса, если его нет
+в докладе; «информация принята») и режим **LLM** — любой OpenAI-совместимый API:
+```env
+DIALOGUE_ENGINE=llm
+LLM_API_URL=http://host.docker.internal:11434/v1   # Ollama на этой машине / vLLM / внешний API
+LLM_MODEL=qwen2.5:7b
+LLM_API_KEY=                                        # если нужен
 ```
-
-- `reply_text` озвучивается TTS (до 1000 символов; пустая строка — абонент молчит).
-- `end_call: true` — после этой реплики абонент кладёт трубку.
-- Лишние поля ответа игнорируются (можно добавлять `emotion` и т.п.).
-- Ответ нужен быстро: пауза ML видна оператору как молчание абонента. Цель < 2 с, таймаут `HTTP_TIMEOUT_SEC` (30 с).
-- Ошибка/таймаут ML → звонок завершается с `reason: ml_error`.
-
-Лимиты телефонии поверх ML: `MAX_TURNS` (12 реплик абонента), `MAX_CALL_SEC` (300 с).
-
-Заглушка: `telephony/mocks/mock_services.py` — отвечает по ключевым словам из `telephony/mocks/scenarios/*.json`.
+При недоступности LLM ответ по правилам (`engine: rules-fallback`), звонок не срывается.
 
 ---
 
 ## 4. Записи и аудио
 
-| Файл (хост `data/…`, URL `RECORDINGS_BASE_URL/…`) | Что |
+| Файл (`data/…`, URL `RECORDINGS_BASE_URL/…`) | Что |
 |---|---|
-| `recordings/<call_id>.wav` | весь разговор (оба голоса), `recording_url` в `call.ended` |
-| `recordings/<call_id>_opNN.wav` | ответ оператора на шаге NN (вход STT) |
-| `tts/<call_id>_cNN.wav` | реплика абонента на шаге NN (выход TTS) |
+| `recordings/<call_id>.wav` | весь разговор (оба голоса) = `recording_url` |
+| `recordings/<call_id>_opNN.wav` | реплика обучающегося на шаге NN (вход STT) |
+| `tts/cache_<голос>_<хэш>.wav` | реплика собеседника (кэш: одинаковая фраза синтезируется один раз) |
 
-Формат: WAV PCM 16 бит, моно, 8 кГц. MP3: `docker compose exec audio-tools python convert_to_mp3.py --once`.
-voice-service (`POST /stt`, `POST /tts`) — см. `telephony/README.md`, раздел «Этап 5».
+WAV PCM 16 бит, моно, 8 кГц. MP3: `docker compose exec audio-tools python convert_to_mp3.py --once`.
+voice-service: `POST /tts {"text", "voice": "male"|"female", "cache": true | "save_as": "имя"}`,
+`POST /stt` (WAV или `{"path"}`), `GET /health` (список голосов).
 
 ---
 
-## 5. Подключение настоящих сервисов
+## 5. Подключение Frontend
 
-В `telephony/.env` (или в корневом compose):
+Минимальный код (браузер, без библиотек):
+```js
+const TEL = "http://localhost:8092";          // в config.js
+const WS = "ws01";                            // SIP-аккаунт этого рабочего места
+
+// открыли карточку -> телефония знает контекст (набор 2XXX/3000 с телефона)
+await fetch(`${TEL}/trainees/${WS}/context`, {method: "PUT", headers: {"Content-Type": "application/json"},
+  body: JSON.stringify({session_id, card})});
+
+// кнопка звонка у службы в карточке
+const call = await (await fetch(`${TEL}/calls`, {method: "POST", headers: {"Content-Type": "application/json"},
+  body: JSON.stringify({call_type: "dispatch", trainee: WS, service: "Служба 101 (МЧС)"})})).json();
+
+// состояние звонка и реплики вживую
+const es = new EventSource(`${TEL}/events?trainee=${WS}`);
+es.addEventListener("call.dialing",   e => toast("Звонок: поднимите трубку"));
+es.addEventListener("call.started",   e => toast("Соединено"));
+es.addEventListener("call.utterance", e => showLine(JSON.parse(e.data)));   // role, text
+es.addEventListener("call.ended",     e => toast("Разговор завершён"));     // recording_url, transcript
+es.addEventListener("call.failed",    e => toast("Не дозвонились: " + JSON.parse(e.data).reason)); // unavailable = софтфон не зарегистрирован
+```
+Входящий доклад старшего (`report`) придёт тем же потоком (`call.dialing` с `call_type: "report"`).
+
+## 6. Подключение настоящих ML и Backend
 
 ```env
-# убрать заглушки
-COMPOSE_PROFILES=
-ML_API_URL=http://ml:8000          # базовый URL; телефония добавит /dialogue/turn
-BACKEND_URL=http://backend:8000    # телефония добавит /telephony/events
+COMPOSE_PROFILES=                  # без заглушек
+ML_API_URL=http://ml:8000          # телефония добавит /dialogue/turn
+BACKEND_URL=http://backend:8000    # телефония добавит /telephony/events; пусто — только журнал
 ```
-
-Сервисы должны быть в одной Docker-сети с telephony (имена `ml`, `backend` — имена сервисов compose).
-Проверка: `curl http://localhost:8092/health` → `ml_api_url`/`backend_url` новые; тестовый звонок `POST /calls`.
+Сервисы в одной Docker-сети (корневой `docker-compose.yml` подключает compose ролей через `include`).
+Проверка: `GET /health` → новые адреса; `python telephony/demo/demo_calls.py dispatch`.

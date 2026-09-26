@@ -15,7 +15,7 @@ services:
       - "${EXTERNAL_SIGNALING_PORT:-5063}:5060/udp"
       - "${EXTERNAL_SIGNALING_PORT:-5063}:5060/tcp"
       - "5041:5038/tcp"                 # AMI
-      - "10033-10043:10033-10043/udp"   # RTP (= rtp.conf)
+      - "10000-10059:10000-10059/udp"   # RTP (= rtp.conf), до 30 разговоров
     volumes:
       - ./asterisk/conf:/etc/asterisk-templates:ro
       - asterisk-logs:/var/log/asterisk
@@ -30,6 +30,9 @@ services:
       - SIP_BOB_PASSWORD=${SIP_BOB_PASSWORD:-changeme_bob}
       - EXTERNAL_MEDIA_ADDRESS=${EXTERNAL_MEDIA_ADDRESS:-127.0.0.1}
       - EXTERNAL_SIGNALING_PORT=${EXTERNAL_SIGNALING_PORT:-5063}
+      # рабочие места обучающихся ws01..wsNN (логин = ws01, пароль общий для класса)
+      - TRAINEE_ACCOUNTS=${TRAINEE_ACCOUNTS:-20}
+      - TRAINEE_PASSWORD=${TRAINEE_PASSWORD:-changeme_ws}
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 10s
@@ -57,7 +60,9 @@ services:
       - MAX_TURNS=${MAX_TURNS:-12}
       - MAX_CALL_SEC=${MAX_CALL_SEC:-300}
       - MAX_UTTERANCE_SEC=${MAX_UTTERANCE_SEC:-20}
-      - SILENCE_SEC=${SILENCE_SEC:-3}
+      - SILENCE_SEC=${SILENCE_SEC:-2}
+      - RINGBACK_SEC=${RINGBACK_SEC:-3}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - RECORDINGS_BASE_URL=${RECORDINGS_BASE_URL:-http://localhost:8090}
     volumes:
       - ../data/sessions:/data
@@ -92,6 +97,9 @@ services:
       - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
       - WHISPER_COMPUTE_TYPE=${WHISPER_COMPUTE_TYPE:-int8}
       - PIPER_VOICE=${PIPER_VOICE:-ru_RU-irina-medium}
+      - PIPER_VOICE_FEMALE=${PIPER_VOICE_FEMALE:-ru_RU-irina-medium}
+      - PIPER_VOICE_MALE=${PIPER_VOICE_MALE:-ru_RU-dmitri-medium}
+      - WHISPER_WORKERS=${WHISPER_WORKERS:-2}
       - TTS_SAMPLE_RATE=${TTS_SAMPLE_RATE:-8000}
       - MOCK_STT_TEXT=${MOCK_STT_TEXT:-Назовите адрес. Есть пострадавшие? Бригада уже выехала.}
       - AUDIO_ROOT=/recordings
@@ -116,6 +124,15 @@ services:
     profiles: ["mocks"]
     ports:
       - "${MOCKS_PORT:-8093}:8093"
+    environment:
+      # rules — правила; llm — OpenAI-совместимая LLM по адресу LLM_API_URL (при сбое — правила)
+      - DIALOGUE_ENGINE=${DIALOGUE_ENGINE:-rules}
+      - LLM_API_URL=${LLM_API_URL:-}
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5:7b}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_TIMEOUT_SEC=${LLM_TIMEOUT_SEC:-20}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # LLM на хосте (Ollama) из контейнера
     restart: unless-stopped
 
 volumes:

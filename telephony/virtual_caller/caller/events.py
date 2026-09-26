@@ -28,6 +28,10 @@ class EventSink:
         self.timeout = timeout
         self._file_lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue(maxsize=10000)
+        # подписчики GET /events (SSE): (фильтр, очередь). Медленный клиент теряет
+        # события сверх 1000, но не тормозит звонки.
+        self._subscribers: list[tuple[dict, queue.Queue]] = []
+        self._sub_lock = threading.Lock()
         if self.webhook_url:
             threading.Thread(target=self._deliver_loop, name="event-webhook", daemon=True).start()
 
@@ -39,12 +43,33 @@ class EventSink:
             with self.log_path.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
         log.info("event=%s call_id=%s", event, fields.get("call_id", "-"))
+        self._publish(record)
         if self.webhook_url:
             try:
                 self._queue.put_nowait(record)
             except queue.Full:
                 log.error("очередь webhook переполнена, событие только в %s", self.log_path)
         return record
+
+    def subscribe(self, filters: dict) -> queue.Queue:
+        q: queue.Queue = queue.Queue(maxsize=1000)
+        with self._sub_lock:
+            self._subscribers.append((filters, q))
+        return q
+
+    def unsubscribe(self, q: queue.Queue) -> None:
+        with self._sub_lock:
+            self._subscribers = [(f, sq) for f, sq in self._subscribers if sq is not q]
+
+    def _publish(self, record: dict) -> None:
+        with self._sub_lock:
+            subs = list(self._subscribers)
+        for filters, q in subs:
+            if all(record.get(k) == v for k, v in filters.items() if v):
+                try:
+                    q.put_nowait(record)
+                except queue.Full:
+                    pass
 
     def _deliver_loop(self) -> None:
         while True:

@@ -10,13 +10,14 @@ import logging
 import socketserver
 import threading
 
-from .agi import AGISession
+from .agi import AGISession, ChannelHungUp
 from .ami import AMIClient
 from .api import CallControl, make_api_server
-from .calls import CallRegistry
+from .calls import CallRegistry, TraineeContexts
 from .clients import DialogueClient, VoiceClient
 from .config import Settings
 from .dialogue import DialogueRunner
+from .directory import Directory
 from .events import EventSink
 
 log = logging.getLogger("virtual_caller")
@@ -33,6 +34,9 @@ def make_agi_server(runner: DialogueRunner, host: str, port: int) -> ThreadingAG
         def handle(self):
             try:
                 runner.handle(AGISession(self.rfile, self.wfile))
+            except ChannelHungUp:
+                # закрыли до окончания разговора; без переменных AGI — это проба healthcheck
+                log.debug("AGI-соединение закрыто без разговора")
             except Exception:
                 log.exception("ошибка обработки AGI-соединения")
 
@@ -43,16 +47,20 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     s = Settings.from_env()
     registry = CallRegistry()
+    contexts = TraineeContexts()
+    directory = Directory.load(s.directory_path)
     events = EventSink(s.sessions_log_path, s.backend_url)
     voice = VoiceClient(s.voice_service_url, s.http_timeout_sec)
-    runner = DialogueRunner(s, voice, DialogueClient(s.ml_api_url, s.http_timeout_sec), events, registry)
-    control = CallControl(s, registry, events, AMIClient(s.ami_host, s.ami_port, s.ami_user, s.ami_password), voice)
+    runner = DialogueRunner(s, voice, DialogueClient(s.ml_api_url, s.http_timeout_sec), events, registry,
+                            directory, contexts)
+    control = CallControl(s, registry, events, AMIClient(s.ami_host, s.ami_port, s.ami_user, s.ami_password),
+                          voice, directory, contexts)
 
     agi_server = make_agi_server(runner, s.agi_host, s.agi_port)
     api_server = make_api_server(control, s.api_host, s.api_port)
     threading.Thread(target=api_server.serve_forever, name="api", daemon=True).start()
-    log.info("FastAGI %s:%d, API %s:%d, ML=%s, Backend=%s", s.agi_host, s.agi_port, s.api_host, s.api_port,
-             s.ml_api_url, s.backend_url or "(только sessions.log)")
+    log.info("FastAGI %s:%d, API %s:%d, ML=%s, Backend=%s, служб в справочнике: %d", s.agi_host, s.agi_port,
+             s.api_host, s.api_port, s.ml_api_url, s.backend_url or "(только sessions.log)", len(directory.contacts))
     try:
         agi_server.serve_forever()
     except KeyboardInterrupt:

@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY caller ./caller
+COPY directory.json .
 
 # 4573 — FastAGI: Asterisk подключается по AGI(agi://virtual-caller:4573/<scenario_id>)
 # 8092 — HTTP API звонков для Backend (telephony/API.md)
