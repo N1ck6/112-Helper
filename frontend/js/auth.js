@@ -1,5 +1,3 @@
-
-
 (function () {
   const roleButtons = document.querySelectorAll(".role-btn");
   const roleSwitch = document.getElementById("role-switch");
@@ -17,7 +15,6 @@
     roleIndicator.style.setProperty("--w", `${btnRect.width}px`);
   }
 
-
   roleButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
       roleButtons.forEach((b) => {
@@ -30,7 +27,6 @@
       moveIndicatorTo(btn);
     });
   });
-
 
   requestAnimationFrame(() => moveIndicatorTo(document.querySelector(".role-btn.active")));
   window.addEventListener("resize", () => moveIndicatorTo(document.querySelector(".role-btn.active")));
@@ -53,7 +49,6 @@
     try {
       const session = await mockLogin({ username, password, role: selectedRole });
 
-
       localStorage.setItem("ddsSession", JSON.stringify(session));
 
       window.location.href = "dashboard.html";
@@ -64,7 +59,6 @@
       submitBtn.textContent = "Войти";
     }
   });
-
 
   function mockLogin({ username, password, role }) {
     return new Promise((resolve, reject) => {

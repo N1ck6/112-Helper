@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Личный кабинет · Тренажёр диспетчера ДДС</title>
-  <!-- Применяем сохранённую тему ДО отрисовки — см. пояснение в index.html -->
+  <title>АРМ ДДС</title>
   <script>
     (function () {
       var saved = localStorage.getItem("ddsTheme");
@@ -22,8 +21,8 @@
 
     <header class="topbar">
       <div class="topbar-left">
-        <span class="icon" style="--icon-src:url('/assets/icons/misc_phone.png'); width:20px; height:20px;" aria-hidden="true"></span>
-        <span class="topbar-title">Тренажёр ДДС</span>
+        <span class="icon" style="--icon-src:url('/assets/icons/misc_phone.png'); width:18px; height:18px;" aria-hidden="true"></span>
+        <span class="topbar-title">АРМ ДДС</span>
       </div>
 
       <div class="topbar-center">
@@ -32,6 +31,10 @@
       </div>
 
       <div class="topbar-right">
+        <button type="button" class="telephony-status" id="telephony-status" hidden>
+          <span class="telephony-dot"></span>
+          <span id="telephony-status-label">доступен</span>
+        </button>
         <span class="role-badge" id="role-badge">роль</span>
         <button type="button" class="theme-toggle" data-theme-toggle aria-label="Переключить тему">
           <span class="icon" style="width:16px; height:16px;"></span>
@@ -40,88 +43,249 @@
       </div>
     </header>
 
-    <main class="dashboard">
-      <div class="dashboard-head">
-        <h1 id="welcome-title">Добро пожаловать</h1>
-        <p id="welcome-sub">Выберите раздел, чтобы продолжить работу.</p>
-      </div>
+    <div class="toolbar" id="toolbar"></div>
 
-      <!-- Карточки формируются в js/app.js в зависимости от роли из localStorage. -->
-      <div class="card-grid" id="card-grid"></div>
-
-      <!-- Очередь карточек происшествий с категориями — показывается только
-           для роли "Обучающийся" (см. app.js). Клик по строке открывает
-           шторку с деталями (#incident-sheet). -->
-      <div id="queue-section" hidden>
-        <h2 class="section-title">Входящие карточки</h2>
-        <div class="queue-list" id="queue-list"></div>
-      </div>
-    </main>
+    <main class="workspace" id="workspace"></main>
 
   </div>
 
-  <!-- Шторка с деталями карточки происшествия. Содержимое (категория,
-       адрес, поля, список служб) заполняется в app.js перед показом. -->
+  <!-- Карточка заполнения (роль "Оператор"): все поля пустые, оператор
+       вносит их сам по ходу разговора с заявителем. -->
   <div class="sheet-overlay" id="incident-sheet" aria-hidden="true">
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
       <div class="sheet-handle"></div>
 
       <div class="sheet-head">
-        <span class="sheet-badge" id="sheet-badge">
-          <span class="icon" id="sheet-badge-icon" style="width:15px; height:15px;"></span>
-          <span id="sheet-badge-label">Категория</span>
-        </span>
+        <h2 id="sheet-title">Новая карточка</h2>
         <button class="sheet-close" id="sheet-close" aria-label="Закрыть">
-          <span class="icon" style="--icon-src:url('/assets/icons/misc_close.png'); width:16px; height:16px;"></span>
+          <span class="icon" style="--icon-src:url('/assets/icons/misc_close.png'); width:15px; height:15px;"></span>
         </button>
       </div>
 
-      <h2 id="sheet-title">Тип происшествия</h2>
-      <p class="sheet-address" id="sheet-address">Адрес происшествия</p>
-
-      <!-- Таймер: по регламенту диспетчер обязан подтвердить приём карточки
-           за 30 секунд, иначе она уходит в статус "Не оповещено". -->
-      <div class="sheet-timer" id="sheet-timer">
-        <span class="icon" style="--icon-src:url('/assets/icons/misc_clock.png');"></span>
-        <span>Осталось на приём</span>
-        <strong id="sheet-timer-value">0:30</strong>
+      <div class="sheet-meta">
+        <span>АОН: <strong id="sheet-phone">—</strong> · поступил <strong id="sheet-time">—</strong></span>
+        <span class="sheet-timer" id="sheet-timer">
+          <span class="icon" style="--icon-src:url('/assets/icons/misc_clock.png');"></span>
+          <strong id="sheet-timer-value">0:00</strong>
+        </span>
       </div>
 
-      <div class="sheet-grid">
-        <div class="sheet-field">
-          <span>Время поступления</span>
-          <strong id="sheet-time">—</strong>
+      <div class="sheet-form">
+        <div class="form-row cols-3">
+          <div class="form-field">
+            <label for="sheet-phone-aon">АОН</label>
+            <input type="text" id="sheet-phone-aon" readonly />
+          </div>
+          <div class="form-field">
+            <label for="sheet-phone-given">Предоставленный номер</label>
+            <input type="text" id="sheet-phone-given" placeholder="+7 ___ ___-__-__" />
+          </div>
+          <div class="form-field">
+            <label for="sheet-phone-onsite">Телефон на место</label>
+            <input type="text" id="sheet-phone-onsite" placeholder="+7 ___ ___-__-__" />
+          </div>
         </div>
-        <div class="sheet-field">
-          <span>Заявитель</span>
-          <strong id="sheet-caller">—</strong>
+
+        <div class="quick-end-row">
+          <button type="button" class="quick-end-btn" id="btn-no-contact">Нет контакта</button>
+          <button type="button" class="quick-end-btn" id="btn-call-failed">Срыв звонка</button>
+        </div>
+
+        <div class="form-field" id="field-types">
+          <label>Что случилось</label>
+          <input type="text" id="type-search" placeholder="Введите тип происшествия для поиска…" autocomplete="off" />
+          <div class="type-tiles" id="type-tiles"></div>
+          <p class="field-error">Выберите хотя бы один тип происшествия</p>
+        </div>
+
+        <div class="form-field" id="field-address">
+          <label for="sheet-address-input">Адрес (единая строка)</label>
+          <input type="text" id="sheet-address-input" placeholder="Начните вводить адрес…" />
+          <p class="field-error">Укажите адрес происшествия</p>
+
+          <div class="address-grid">
+            <div class="form-field">
+              <label for="addr-country">Страна</label>
+              <input type="text" id="addr-country" value="Россия" />
+            </div>
+            <div class="form-field">
+              <label for="addr-region">Субъект</label>
+              <input type="text" id="addr-region" value="Москва" />
+            </div>
+            <div class="form-field">
+              <label for="addr-locality">Населённый пункт</label>
+              <input type="text" id="addr-locality" value="Москва" />
+            </div>
+            <div class="form-field">
+              <label for="addr-okrug">Округ</label>
+              <input type="text" id="addr-okrug" placeholder="ЦАО, ЮАО…" />
+            </div>
+            <div class="form-field">
+              <label for="addr-district">Район</label>
+              <input type="text" id="addr-district" />
+            </div>
+            <div class="form-field">
+              <label for="addr-street">Улица</label>
+              <input type="text" id="addr-street" />
+            </div>
+            <div class="form-field">
+              <label for="addr-house">Дом/Вл</label>
+              <input type="text" id="addr-house" />
+            </div>
+            <div class="form-field">
+              <label for="addr-korpus">Корпус</label>
+              <input type="text" id="addr-korpus" />
+            </div>
+            <div class="form-field">
+              <label for="addr-flat">Квартира/офис</label>
+              <input type="text" id="addr-flat" />
+            </div>
+            <div class="form-field">
+              <label for="addr-entrance">Подъезд</label>
+              <input type="text" id="addr-entrance" />
+            </div>
+            <div class="form-field">
+              <label for="addr-floor">Этаж</label>
+              <input type="text" id="addr-floor" />
+            </div>
+            <div class="form-field">
+              <label for="addr-code">Код домофона</label>
+              <input type="text" id="addr-code" />
+            </div>
+            <div class="form-field span-3">
+              <label for="addr-descriptive">Описательный адрес</label>
+              <input type="text" id="addr-descriptive" placeholder="Например: рядом со школой №25" />
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-field" id="field-caller">
+            <label for="sheet-caller-input">Фамилия и имя заявителя</label>
+            <input type="text" id="sheet-caller-input" placeholder="Иванов Иван" />
+            <p class="field-error">Укажите ФИО заявителя</p>
+          </div>
+          <div class="form-field" id="field-caller-status">
+            <label for="sheet-caller-status">Статус заявителя</label>
+            <select id="sheet-caller-status">
+              <option value="">Выберите статус…</option>
+              <option value="Очевидец">Очевидец</option>
+              <option value="Пострадавший">Пострадавший</option>
+              <option value="Родственник">Родственник</option>
+              <option value="Знакомый">Знакомый</option>
+              <option value="Ребёнок">Ребёнок</option>
+              <option value="Участник">Участник</option>
+            </select>
+            <p class="field-error">Укажите статус заявителя</p>
+          </div>
+        </div>
+
+        <label class="flag-pill" style="align-self:flex-start;">
+          <input type="checkbox" id="foreign-language" style="margin-right:2px;" /> Вызов на иностранном языке
+        </label>
+
+        <div class="form-field" id="field-injured">
+          <label>Отметки по вызову</label>
+          <div class="flag-row">
+            <button type="button" class="flag-pill" data-flag="injured">Пострадавшие</button>
+            <button type="button" class="flag-pill" data-flag="notOnSite">Нет на месте</button>
+            <button type="button" class="flag-pill" data-flag="ambulanceRefused">Отказ от скорой</button>
+            <button type="button" class="flag-pill" data-flag="blocked">Заблокированные</button>
+          </div>
+          <input type="number" id="injured-count" min="1" placeholder="Количество пострадавших" hidden style="margin-top:8px;" />
+        </div>
+
+        <div class="form-field">
+          <label for="sheet-description">Описание со слов заявителя</label>
+          <textarea id="sheet-description" maxlength="500" placeholder="Кратко опишите ситуацию"></textarea>
+          <span class="char-counter" id="description-counter">0 / 500</span>
+          <p class="field-error">Заполните описание со слов заявителя</p>
         </div>
       </div>
 
       <div class="sheet-services">
         <h3>Службы к оповещению</h3>
-        <div id="sheet-services-list"></div>
-      </div>
-
-      <!-- Комментарий диспетчера: по регламенту обязателен при отклонении
-           карточки (нужно указать причину), при принятии — опционален. -->
-      <div class="sheet-comment" id="sheet-comment">
-        <label for="sheet-comment-input">Комментарий диспетчера</label>
-        <textarea id="sheet-comment-input" placeholder="Например: информация передана, служба направлена на место…"></textarea>
-        <p class="field-error">Укажите причину — комментарий обязателен при отклонении карточки</p>
+        <p class="sheet-services-hint" id="sheet-services-hint">Определяются автоматически после выбора типа происшествия.</p>
+        <div class="service-chips" id="service-chips"></div>
+        <div class="service-add" id="service-add" hidden>
+          <select id="service-add-select"></select>
+          <button type="button" class="row-action" id="service-add-btn">Добавить</button>
+        </div>
       </div>
 
       <div class="sheet-actions">
-        <button class="btn-decline" id="sheet-decline" type="button">Отклонить</button>
-        <button class="btn-primary" id="sheet-accept" type="button">Принять карточку</button>
+        <button class="btn-decline" id="sheet-cancel" type="button">Отмена</button>
+        <button class="btn-primary" id="sheet-submit" type="button">Отправить диспетчеру</button>
       </div>
     </div>
   </div>
 
-  <!-- Тост-подтверждение звонка -->
+  <!-- Карточка проверки (роль "Диспетчер" и наблюдение "Администратора"):
+       поля только для чтения, плюс кнопка перезвона заявителю. -->
+  <div class="sheet-overlay" id="review-sheet" aria-hidden="true">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="review-title">
+      <div class="sheet-handle"></div>
+
+      <div class="sheet-head">
+        <h2 id="review-title">Карточка на проверке</h2>
+        <button class="sheet-close" id="review-close" aria-label="Закрыть">
+          <span class="icon" style="--icon-src:url('/assets/icons/misc_close.png'); width:15px; height:15px;"></span>
+        </button>
+      </div>
+
+      <div class="review-callback">
+        <div>
+          <span class="review-callback-label">Номер заявителя (АОН)</span>
+          <span class="review-callback-number" id="review-phone">—</span>
+        </div>
+        <button type="button" class="btn-card" id="review-callback-btn">Перезвонить и уточнить</button>
+      </div>
+
+      <div class="review-grid">
+        <div class="review-field span-2">
+          <span>Что случилось</span>
+          <strong id="review-types">—</strong>
+        </div>
+        <div class="review-field span-2">
+          <span>Адрес</span>
+          <strong id="review-address">—</strong>
+        </div>
+        <div class="review-field">
+          <span>Заявитель</span>
+          <strong id="review-caller">—</strong>
+        </div>
+        <div class="review-field">
+          <span>Статус заявителя</span>
+          <strong id="review-caller-status">—</strong>
+        </div>
+        <div class="review-field span-2">
+          <span>Описание со слов заявителя</span>
+          <strong id="review-description">—</strong>
+        </div>
+      </div>
+
+      <div class="review-flags" id="review-flags"></div>
+
+      <div class="sheet-services">
+        <h3>Службы к оповещению</h3>
+        <div class="service-chips" id="review-services"></div>
+      </div>
+
+      <div class="form-field">
+        <label for="review-comment">Комментарий диспетчера (обязателен при возврате)</label>
+        <textarea id="review-comment" placeholder="Что нужно исправить оператору"></textarea>
+      </div>
+
+      <div class="sheet-actions" id="review-actions">
+        <button class="btn-decline" id="review-return" type="button">Вернуть оператору</button>
+        <button class="btn-primary" id="review-approve" type="button">Утвердить карточку</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toast">
-    <span class="icon" style="--icon-src:url('/assets/icons/misc_phone.png'); width:15px; height:15px;"></span>
-    <span id="toast-text">Звонок соединён</span>
+    <span class="icon" style="--icon-src:url('/assets/icons/misc_phone.png'); width:14px; height:14px;"></span>
+    <span id="toast-text">Готово</span>
   </div>
 
   <script src="js/config.js"></script>
