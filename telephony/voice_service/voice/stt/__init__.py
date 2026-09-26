@@ -22,5 +22,6 @@ def create_stt(settings: Settings) -> STTEngine:
             compute_type=settings.whisper_compute_type,
             beam_size=settings.whisper_beam_size,
             language=settings.stt_language,
+            workers=settings.whisper_workers,
         )
     raise ValueError(f"неизвестный STT_ENGINE={name!r}, доступны: {', '.join(STT_ENGINES)}")

@@ -21,8 +21,12 @@ class Call:
     call_id: str
     session_id: str
     scenario_id: str
-    direction: str                 # outbound (API звонит обучающемуся) | inbound (обучающийся набрал 7xx)
-    trainee: str | None = None     # SIP-аккаунт обучающегося
+    direction: str                 # outbound (API звонит обучающемуся) | inbound (обучающийся набрал номер)
+    trainee: str | None = None     # SIP-аккаунт рабочего места обучающегося
+    call_type: str = "incident_112"  # dispatch | report | applicant | incident_112 (см. directory.py)
+    persona: dict | None = None    # собеседник: служба, имя, должность, пол
+    card: dict | None = None       # карточка происшествия, по которой звонок
+    report: dict | None = None     # для report: {"status": ..., "text": ...}
     channel: str | None = None     # имя канала Asterisk (для отбоя)
     status: str = "dialing"
     reason: str | None = None
@@ -77,3 +81,31 @@ class CallRegistry:
             call = self._calls.get(call_id)
             if call is not None:
                 call.transcript.append(turn)
+
+
+class TraineeContexts:
+    """Что сейчас открыто на рабочем месте: сессия и карточка.
+
+    Frontend/Backend сообщают это через PUT /trainees/{trainee}/context; звонок,
+    который обучающийся набрал сам (2XXX, 3000), получает карточку отсюда.
+    """
+
+    def __init__(self):
+        self._items: dict[str, dict] = {}
+        self._lock = threading.Lock()
+
+    def set(self, trainee: str, context: dict) -> dict:
+        item = {**context, "trainee": trainee, "updated_at": time.time()}
+        with self._lock:
+            self._items[trainee] = item
+        return item
+
+    def get(self, trainee: str | None) -> dict | None:
+        if not trainee:
+            return None
+        with self._lock:
+            return self._items.get(trainee)
+
+    def delete(self, trainee: str) -> bool:
+        with self._lock:
+            return self._items.pop(trainee, None) is not None

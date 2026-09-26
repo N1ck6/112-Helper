@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO_ROOT / "telephony" / "virtual_caller"))
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "mocks"))
 
 import mock_services  # noqa: E402
+import ml_dialogue  # noqa: E402
 from caller.agi import AGIResponse, AGISession, ChannelHungUp, parse_response  # noqa: E402
 from caller.api import CallControl, make_api_server  # noqa: E402
 from caller.calls import CallRegistry  # noqa: E402
@@ -97,12 +98,14 @@ class FakeVoice:
         self.heard = list(heard)
         self.tts_fails = tts_fails
         self.synthesized: list[str] = []
+        self.voices: list[str] = []
 
-    def synthesize_to_file(self, text, name, call_id):
+    def synthesize_to_file(self, text, call_id, voice=None):
         if self.tts_fails:
             raise ServiceError("tts down")
         self.synthesized.append(text)
-        return f"/tts/{name}"
+        self.voices.append(voice)
+        return f"/tts/cache_{voice}_{len(self.synthesized):02d}"
 
     def transcribe_file(self, filename, call_id):
         return self.heard.pop(0) if self.heard else ""
@@ -118,11 +121,15 @@ class MockML:
         self.fail = fail
         self.requests = []
 
-    def next_turn(self, *, session_id, scenario_id, call_id, turn, history, operator_text):
-        self.requests.append({"turn": turn, "history": history, "operator_text": operator_text})
+    def next_turn(self, *, session_id, scenario_id, call_id, turn, history, operator_text,
+                  call_type="incident_112", persona=None, context=None):
+        req = {"session_id": session_id, "scenario_id": scenario_id, "call_id": call_id, "turn": turn,
+               "history": history, "operator_text": operator_text, "call_type": call_type,
+               "persona": persona, "context": context}
+        self.requests.append(req)
         if self.fail:
             raise ServiceError("ml down")
-        r = mock_services.dialogue_turn(SCENARIOS[scenario_id], turn, history, operator_text)
+        r = ml_dialogue.rules_turn(req, SCENARIOS)
         return DialogueReply(r["reply_text"], r["end_call"])
 
 
@@ -239,12 +246,12 @@ def test_dialogue_full_conversation(settings):
     voice = FakeVoice(["Где вы находитесь?", "Есть пострадавшие?", "Принято, бригада выехала"])
     ml = MockML()
     runner, registry = _runner(settings, voice, ml)
-    agi = FakeAGI(variables={"SESSION_ID": "sess-1"})
+    agi = FakeAGI(variables={"SESSION_ID": "sess-1", "CALL_TYPE": "incident_112"})
 
     assert runner.handle(agi) == "completed"
     assert agi.hungup and agi.records == 3
     assert voice.synthesized[0] == SCENARIOS["scenario_001"]["opening"]
-    assert agi.played[0] == "/tts/1700000000.1_c00"
+    assert agi.played[0] == "/tts/cache_female_01" and voice.voices[0] == "female"
     # ML получает историю, включая последнюю реплику оператора
     assert ml.requests[1]["history"][-1] == {"role": "operator", "text": "Где вы находитесь?"}
 
@@ -358,7 +365,7 @@ def test_api_start_call_answered(call_api):
     assert _wait(lambda: ami.originated)
     o = ami.originated[0]
     assert o["channel"] == "PJSIP/alice" and o["context"] == "training-run"
-    assert o["variables"] == {"SCENARIO_ID": "scenario_001", "SESSION_ID": "sess-9"}
+    assert o["variables"] == {"SCENARIO_ID": "scenario_001", "SESSION_ID": "sess-9", "CALL_TYPE": "incident_112"}
     assert o["call_id"] == call["call_id"]
     status, got = _http("GET", f"{url}/calls/{call['call_id']}")
     assert status == 200 and got["channel"] == "PJSIP/alice-0001"

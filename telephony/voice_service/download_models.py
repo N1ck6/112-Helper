@@ -38,7 +38,12 @@ def download_whisper(settings: Settings) -> None:
 
 
 def download_piper(settings: Settings) -> None:
-    voice = settings.piper_voice
+    # голос по умолчанию + голоса категорий собеседника (male/female)
+    for voice in dict.fromkeys([settings.piper_voice, *settings.voice_aliases().values()]):
+        download_piper_voice(settings, voice)
+
+
+def download_piper_voice(settings: Settings, voice: str) -> None:
     target_dir = settings.models_dir / "piper"
     target_dir.mkdir(parents=True, exist_ok=True)
     for suffix in (".onnx", ".onnx.json"):

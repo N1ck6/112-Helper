@@ -22,8 +22,11 @@ class Settings:
     whisper_device: str
     whisper_compute_type: str
     whisper_beam_size: int
-    # Piper: имя голоса (ru_RU-irina-medium) или путь к .onnx
+    # Piper: голос по умолчанию (ru_RU-irina-medium) или путь к .onnx,
+    # и голоса по категориям собеседника (мужской / женский).
     piper_voice: str
+    piper_voice_male: str
+    piper_voice_female: str
     # Частота WAV на выходе TTS. 8000 = формат, который Asterisk
     # проигрывает через STREAM FILE без перекодирования.
     tts_sample_rate: int
@@ -35,6 +38,11 @@ class Settings:
     port: int
     max_upload_bytes: int
     max_tts_chars: int
+    # Сколько распознаваний faster-whisper идёт параллельно (num_workers модели).
+    whisper_workers: int
+
+    def voice_aliases(self) -> dict[str, str]:
+        return {"male": self.piper_voice_male, "female": self.piper_voice_female}
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -48,6 +56,8 @@ class Settings:
             whisper_compute_type=_env("WHISPER_COMPUTE_TYPE", "int8"),
             whisper_beam_size=int(_env("WHISPER_BEAM_SIZE", "5")),
             piper_voice=_env("PIPER_VOICE", "ru_RU-irina-medium"),
+            piper_voice_male=_env("PIPER_VOICE_MALE", "ru_RU-dmitri-medium"),
+            piper_voice_female=_env("PIPER_VOICE_FEMALE", _env("PIPER_VOICE", "ru_RU-irina-medium")),
             tts_sample_rate=int(_env("TTS_SAMPLE_RATE", "8000")),
             models_dir=Path(_env("MODELS_DIR", "/models")),
             audio_root=Path(_env("AUDIO_ROOT", "/recordings")),
@@ -56,4 +66,5 @@ class Settings:
             port=int(_env("LISTEN_PORT", "8091")),
             max_upload_bytes=int(_env("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))),
             max_tts_chars=int(_env("MAX_TTS_CHARS", "1000")),
+            whisper_workers=max(1, int(_env("WHISPER_WORKERS", "2"))),
         )

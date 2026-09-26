@@ -42,6 +42,10 @@ class Settings:
     silence_sec: int
     min_speech_sec: float
     fallback_sound: str
+    # Справочник служб, CORS для frontend (браузер ходит в API напрямую)
+    directory_path: Path
+    cors_origins: str
+    ringback_sec: int
     # Данные
     sessions_log_path: Path
     recordings_dir: str
@@ -70,6 +74,9 @@ class Settings:
             silence_sec=int(_env("SILENCE_SEC", "3")),
             min_speech_sec=float(_env("MIN_SPEECH_SEC", "0.3")),
             fallback_sound=_env("FALLBACK_SOUND", "beep"),
+            directory_path=Path(_env("DIRECTORY_PATH", str(Path(__file__).parent.parent / "directory.json"))),
+            cors_origins=_env("CORS_ORIGINS", "*"),
+            ringback_sec=int(_env("RINGBACK_SEC", "3")),
             sessions_log_path=Path(_env("SESSIONS_LOG_PATH", "/data/sessions.log")),
             recordings_dir=_env("RECORDINGS_DIR", "/recordings"),
             recordings_base_url=_url("RECORDINGS_BASE_URL", "http://localhost:8090"),

@@ -54,9 +54,12 @@ class VoiceClient:
         self.base_url = base_url
         self.timeout = timeout
 
-    def synthesize_to_file(self, text: str, name: str, call_id: str) -> str:
-        """Возвращает путь без расширения для STREAM FILE (/tts/<name>)."""
-        data = post_json(f"{self.base_url}/tts", {"text": text, "save_as": name},
+    def synthesize_to_file(self, text: str, call_id: str, voice: str | None = None) -> str:
+        """Возвращает путь без расширения для STREAM FILE (/tts/<name>).
+
+        cache=true: одинаковые фразы («Слушаю вас») синтезируются один раз.
+        """
+        data = post_json(f"{self.base_url}/tts", {"text": text, "voice": voice, "cache": True},
                          self.timeout, {"X-Call-Id": call_id})
         sound = data.get("asterisk_sound")
         if not sound:
@@ -91,11 +94,15 @@ class DialogueClient:
         self.timeout = timeout
 
     def next_turn(self, *, session_id: str, scenario_id: str, call_id: str, turn: int,
-                  history: list[dict], operator_text: str | None) -> DialogueReply:
+                  history: list[dict], operator_text: str | None, call_type: str = "incident_112",
+                  persona: dict | None = None, context: dict | None = None) -> DialogueReply:
         data = post_json(f"{self.base_url}/dialogue/turn", {
             "session_id": session_id,
             "scenario_id": scenario_id,
             "call_id": call_id,
+            "call_type": call_type,
+            "persona": persona,
+            "context": context or {},
             "turn": turn,
             "history": history,
             "operator_text": operator_text,

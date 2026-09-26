@@ -1,4 +1,30 @@
-# Этот файл —общая точка сборки для ПОЛНОГО стенда:
-# SIP/VoIP + voice service + STT/TTS + Backend + Frontend + ML + PostgreSQL.
+# Общая точка сборки полного стенда тренажёра.
+# Каждая роль держит свой compose в своей папке и подключается сюда через include.
+#
+#   COMPOSE_PROFILES=mocks docker compose up -d --build   # с заглушками ML/Backend
+#   docker compose up -d --build                            # когда подключены настоящие ML/Backend
+#
+# Сейчас: телефония (telephony/docker-compose.yml) + статический frontend.
+# Backend / ML / PostgreSQL добавляются строкой в include или сервисом ниже.
+# Не запускать одновременно с `docker compose up` из telephony/ (те же имена контейнеров).
 
-services: {}
+include:
+  - path: telephony/docker-compose.yml
+    env_file: telephony/.env
+
+services:
+  # Frontend — статические файлы из frontend/ (код — зона роли Frontend, здесь только раздача).
+  # http://localhost:8080/  API телефонии для него: http://localhost:8092 (CORS разрешён)
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: trainer-frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped

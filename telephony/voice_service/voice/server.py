@@ -4,11 +4,14 @@
     POST /stt     -> WAV (Content-Type: audio/wav) или JSON {"path": "..."} -> JSON с текстом
     POST /tts     -> JSON {"text": "..."} -> audio/wav
                      JSON {"text": "...", "save_as": "name"} -> JSON с путём к файлу
+                     + "voice": "male" | "female" | имя голоса; "cache": true — файл по хэшу
+                       (текст+голос+частота), повторная фраза не синтезируется заново
 
 Заголовок X-Call-Id (необязательный) попадает в лог — связка с call_id.
 Контракт подробно: telephony/README.md, раздел «Этап 5».
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -21,12 +24,14 @@ from urllib.parse import parse_qs, urlparse
 
 from .audio import AudioFormatError, wav_info
 from .config import Settings
+from .textnorm import normalize_for_tts
 from .stt import EngineNotReady, STTEngine, create_stt
-from .tts import TTSEngine, create_tts
+from .tts import TTSEngine, TTSResult, create_tts
 
 log = logging.getLogger("voice_service")
 
 SAVE_AS_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+VOICE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 ALLOWED_RATES = (8000, 16000, 22050, 24000, 44100, 48000)
 
 
@@ -45,7 +50,7 @@ class VoiceService:
         self.stt = stt or create_stt(settings)
         self.tts = tts or create_tts(settings)
         self.status = {"stt": {"engine": self.stt.name, "ready": False, "error": None},
-                       "tts": {"engine": self.tts.name, "ready": False, "error": None}}
+                       "tts": {"engine": self.tts.name, "ready": False, "error": None, "voices": []}}
 
     def load(self) -> None:
         for key, engine in (("stt", self.stt), ("tts", self.tts)):
@@ -53,6 +58,8 @@ class VoiceService:
             try:
                 engine.load()
                 self.status[key]["ready"] = True
+                if key == "tts":
+                    self.status[key]["voices"] = self.tts.voices()
                 log.info("%s engine=%s загружен за %.1f с", key, engine.name, time.monotonic() - started)
             except Exception as exc:  # сервис стартует, /health покажет причину
                 self.status[key]["error"] = str(exc)
@@ -91,7 +98,7 @@ class VoiceService:
 
     def tts_request(self, payload: dict):
         self._require("tts")
-        text = str(payload.get("text", "")).strip()
+        text = normalize_for_tts(str(payload.get("text", "")))
         if not text:
             raise ApiError(HTTPStatus.BAD_REQUEST, "поле text пустое")
         if len(text) > self.settings.max_tts_chars:
@@ -102,20 +109,32 @@ class VoiceService:
             raise ApiError(HTTPStatus.BAD_REQUEST, "sample_rate должен быть числом") from None
         if rate not in ALLOWED_RATES:
             raise ApiError(HTTPStatus.BAD_REQUEST, f"sample_rate из {ALLOWED_RATES}")
+        voice = payload.get("voice")
+        if voice is not None and not VOICE_RE.match(str(voice)):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "voice: male | female | имя голоса [A-Za-z0-9_.-]")
         save_as = payload.get("save_as")
+        if payload.get("cache"):
+            # имя по содержимому: одна и та же фраза тем же голосом синтезируется один раз
+            digest = hashlib.sha1(f"{self.tts.name}|{voice}|{rate}|{text}".encode("utf-8")).hexdigest()[:16]
+            save_as = f"cache_{voice or 'default'}_{digest}"
         if save_as is not None:
             save_as = str(save_as).removesuffix(".wav")
             if not SAVE_AS_RE.match(save_as) or save_as.startswith("."):
                 raise ApiError(HTTPStatus.BAD_REQUEST, "save_as: только [A-Za-z0-9_.-], до 100 символов")
-        started = time.monotonic()
-        result = self.tts.synthesize(text, rate)
-        processing = round(time.monotonic() - started, 3)
-        if save_as is None:
-            return result, processing, None
         out_dir = self.settings.tts_output_dir
+        path = out_dir / f"{save_as}.wav" if save_as is not None else None
+        if payload.get("cache") and path.is_file():
+            info = wav_info(path.read_bytes())
+            return TTSResult(b"", info.sample_rate, round(info.duration_sec, 3), "cache"), 0.0, path
+        started = time.monotonic()
+        result = self.tts.synthesize(text, rate, voice)
+        processing = round(time.monotonic() - started, 3)
+        if path is None:
+            return result, processing, None
         out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / f"{save_as}.wav"
-        path.write_bytes(result.wav)
+        tmp = path.with_suffix(".part")
+        tmp.write_bytes(result.wav)
+        tmp.replace(path)  # атомарно: Asterisk не увидит недописанный файл
         return result, processing, path
 
 
