@@ -149,10 +149,7 @@
     const status = document.getElementById("telephony-status");
     if (status) {
       status.hidden = session.role !== "student";
-      if (session.role === "student") {
-        status.classList.add("is-available");
-        document.getElementById("telephony-status-label").textContent = "доступен";
-      }
+      if (session.role === "student") setTelephonyStatus("available");
     }
   }
 
@@ -522,6 +519,7 @@
   let removedAutoServices = [];
   let currentFlags = { injured: false, notOnSite: false, ambulanceRefused: false, blocked: false };
   let telephonyResetTimer = null;
+  let manualPause = false; // оператор сам поставил «недоступен» кнопкой в шапке
 
   function initSheet() {
     typeTilesEl.innerHTML = INCIDENT_TYPES.map(
@@ -587,8 +585,11 @@
 
     if (telephonyStatusBtn) {
       telephonyStatusBtn.addEventListener("click", () => {
-        if (telephonyStatusBtn.classList.contains("is-unavailable")) return;
-        setTelephonyStatus(telephonyStatusBtn.classList.contains("is-available") ? "unavailable" : "available");
+        // пока открыта карточка, статус ставится автоматически («недоступен» — занят вызовом)
+        if (overlay.classList.contains("is-open")) return;
+        manualPause = !manualPause;
+        clearTimeout(telephonyResetTimer);
+        setTelephonyStatus(manualPause ? "unavailable" : "available");
       });
     }
 
@@ -612,6 +613,7 @@
     telephonyStatusBtn.classList.toggle("is-available", status === "available");
     telephonyStatusBtn.classList.toggle("is-unavailable", status === "unavailable");
     telephonyStatusLabel.textContent = status === "available" ? "доступен" : "недоступен";
+    emit("dds:operator-status", { available: status === "available" });
   }
 
   function currentAutoServices() {
@@ -805,6 +807,7 @@
     requestAnimationFrame(() => overlay.classList.add("is-open"));
     overlay.setAttribute("aria-hidden", "false");
     typeSearchInput.focus();
+    emit("dds:card-open", call);
   }
 
   function closeSheet() {
@@ -812,7 +815,10 @@
     overlay.setAttribute("aria-hidden", "true");
     stopTimer();
     clearTimeout(telephonyResetTimer);
-    telephonyResetTimer = setTimeout(() => setTelephonyStatus("available"), 10000);
+    telephonyResetTimer = setTimeout(() => {
+      if (!manualPause) setTelephonyStatus("available");
+    }, 10000);
+    emit("dds:card-close", currentCall);
     setTimeout(() => {
       overlay.hidden = true;
     }, 320);
@@ -831,7 +837,9 @@
       if (e.target === reviewOverlay) closeReviewSheet();
     });
     document.getElementById("review-callback-btn").addEventListener("click", () => {
-      showToast(`Звонок заявителю: ${currentReviewCall.phone}`);
+      // звонок ведёт js/telephony.js (панель «Телефон»); без неё — только уведомление
+      if (window.DDS_TELEPHONY) emit("dds:callback", currentReviewCall);
+      else showToast(`Звонок заявителю: ${currentReviewCall.phone}`);
     });
     document.getElementById("review-approve").addEventListener("click", () => {
       currentReviewCall.status = "approved";
@@ -890,15 +898,37 @@
     reviewOverlay.hidden = false;
     requestAnimationFrame(() => reviewOverlay.classList.add("is-open"));
     reviewOverlay.setAttribute("aria-hidden", "false");
+    emit("dds:review-open", call);
   }
 
   function closeReviewSheet() {
+    emit("dds:review-close", currentReviewCall);
     reviewOverlay.classList.remove("is-open");
     reviewOverlay.setAttribute("aria-hidden", "true");
     setTimeout(() => {
       reviewOverlay.hidden = true;
     }, 320);
   }
+
+  // --- связь с телефонией (js/telephony.js): события АРМ и сохранение отработок ---
+  function emit(name, detail) {
+    document.dispatchEvent(new CustomEvent(name, { detail: detail }));
+  }
+
+  window.DDS = {
+    role: session.role,
+    // отработка — звонок по карточке: служба, номер, кто принял, суть, время, запись
+    addCallLog(incidentId, entry) {
+      const call = incidents.find((c) => c.id === incidentId);
+      if (!call) return false;
+      call.calls = (call.calls || []).concat([entry]);
+      saveIncidents();
+      return true;
+    },
+    getIncident(incidentId) {
+      return incidents.find((c) => c.id === incidentId) || null;
+    },
+  };
 
   // --- тост-уведомление ---
   let toastTimer = null;

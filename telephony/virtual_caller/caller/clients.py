@@ -47,6 +47,19 @@ def get_json(url: str, timeout: float) -> tuple[int, dict]:
         raise ServiceError(f"{url} недоступен: {exc}") from exc
 
 
+def reachable(url: str, timeout: float = 3) -> bool:
+    """Сервис отвечает по HTTP (любой код, даже 404) — сеть и процесс живы."""
+    if not url:
+        return False
+    try:
+        with urllib.request.urlopen(url, timeout=timeout):
+            return True
+    except urllib.error.HTTPError:
+        return True
+    except (urllib.error.URLError, OSError):
+        return False
+
+
 class VoiceClient:
     """voice-service: TTS в файл для Asterisk, STT файла из /recordings."""
 
@@ -84,6 +97,7 @@ class VoiceClient:
 class DialogueReply:
     reply_text: str
     end_call: bool
+    voice: str | None = None   # male | female — ML может сменить голос (пол заявителя из сценария)
 
 
 class DialogueClient:
@@ -109,5 +123,7 @@ class DialogueClient:
         }, self.timeout, {"X-Call-Id": call_id})
         if not isinstance(data.get("reply_text", ""), str):
             raise ServiceError(f"ML: reply_text должен быть строкой: {data}")
+        voice = data.get("voice")
         return DialogueReply(reply_text=data.get("reply_text", "").strip(),
-                             end_call=bool(data.get("end_call", False)))
+                             end_call=bool(data.get("end_call", False)),
+                             voice=voice if voice in ("male", "female") else None)

@@ -33,7 +33,7 @@ from caller.api import CallControl, make_api_server  # noqa: E402
 from caller.calls import CallRegistry  # noqa: E402
 from caller.clients import DialogueClient, DialogueReply, ServiceError  # noqa: E402
 from caller.config import Settings  # noqa: E402
-from caller.dialogue import DialogueRunner, trainee_from_channel  # noqa: E402
+from caller.dialogue import ML_ERROR_TEXT, DialogueRunner, trainee_from_channel  # noqa: E402
 from caller.events import EventSink  # noqa: E402
 
 CALL_API_URL = os.environ.get("CALL_API_URL", "http://localhost:8092")
@@ -129,8 +129,8 @@ class MockML:
         self.requests.append(req)
         if self.fail:
             raise ServiceError("ml down")
-        r = ml_dialogue.rules_turn(req, SCENARIOS)
-        return DialogueReply(r["reply_text"], r["end_call"])
+        r = ml_dialogue.next_turn(req, SCENARIOS, None)
+        return DialogueReply(r["reply_text"], r["end_call"], r.get("voice"))
 
 
 class FakeAMI:
@@ -143,11 +143,16 @@ class FakeAMI:
     def ping(self):
         return self.ok
 
-    def originate(self, *, call_id, channel, context, variables, caller_id, ring_timeout_sec, on_channel=None):
+    def originate(self, *, call_id, channel, context, variables, caller_id, ring_timeout_sec, on_channel=None,
+                  exten="s"):
         if on_channel:
             on_channel(f"{channel}-0001")
-        self.originated.append({"call_id": call_id, "channel": channel, "context": context, "variables": variables})
+        self.originated.append({"call_id": call_id, "channel": channel, "context": context, "variables": variables,
+                                "exten": exten, "caller_id": caller_id})
         return self.outcome
+
+    def channel_alive(self, channel):
+        return False
 
     def hangup(self, channel):
         self.hung.append(channel)
@@ -275,10 +280,12 @@ def test_dialogue_operator_hangup(settings):
 
 
 def test_dialogue_ml_down_ends_call(settings):
-    runner, _ = _runner(settings, FakeVoice([]), MockML(fail=True))
+    """ML недоступен: собеседник не молчит до отбоя, а говорит о неполадке и кладёт трубку."""
+    voice = FakeVoice([])
+    runner, _ = _runner(settings, voice, MockML(fail=True))
     agi = FakeAGI()
     assert runner.handle(agi) == "ml_error"
-    assert agi.played == [settings.fallback_sound] and agi.hungup
+    assert voice.synthesized == [ML_ERROR_TEXT] and agi.hungup
     assert any(e["event"] == "call.error" and e["stage"] == "ml" for e in _events(settings))
 
 

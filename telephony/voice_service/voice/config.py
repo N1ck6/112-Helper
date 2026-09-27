@@ -40,6 +40,10 @@ class Settings:
     max_tts_chars: int
     # Сколько распознаваний faster-whisper идёт параллельно (num_workers модели).
     whisper_workers: int
+    # Нет моделей при старте -> скачать (нужен интернет один раз); не вышло -> engine_fallback
+    models_auto_download: bool = False
+    # "mock" — работать заглушкой вместо недоступного движка; "" — остаться неготовым (503)
+    engine_fallback: str = ""
 
     def voice_aliases(self) -> dict[str, str]:
         return {"male": self.piper_voice_male, "female": self.piper_voice_female}
@@ -67,4 +71,6 @@ class Settings:
             max_upload_bytes=int(_env("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))),
             max_tts_chars=int(_env("MAX_TTS_CHARS", "1000")),
             whisper_workers=max(1, int(_env("WHISPER_WORKERS", "2"))),
+            models_auto_download=_env("MODELS_AUTO_DOWNLOAD", "0") in ("1", "true", "yes"),
+            engine_fallback=_env("ENGINE_FALLBACK", "none").lower().replace("none", ""),
         )

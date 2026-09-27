@@ -1,6 +1,7 @@
 {
   "scenario_id": "scenario_002",
   "title": "ДТП с пострадавшими",
+  "gender": "male",
   "incident_type": "ДТП с пострадавшими",
   "_comment": "Сценарий для mock ML (telephony/mocks).",
   "opening": "Здравствуйте, тут авария на перекрёстке, человек пострадал!",

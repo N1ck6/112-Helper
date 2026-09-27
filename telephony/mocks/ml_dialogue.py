@@ -306,11 +306,20 @@ def llm_turn(req: dict, scenarios: dict[str, dict], cfg: LLMConfig) -> dict:
     return {"reply_text": text[:600], "end_call": end}
 
 
+def scenario_voice(req: dict, scenarios: dict[str, dict]) -> dict:
+    """Пол заявителя сценария 112 -> голос (необязательное поле ответа "voice")."""
+    if (req.get("call_type") or "incident_112") != "incident_112":
+        return {}
+    gender = (scenarios.get(str(req.get("scenario_id"))) or {}).get("gender")
+    return {"voice": gender} if gender in ("male", "female") else {}
+
+
 def next_turn(req: dict, scenarios: dict[str, dict], llm: LLMConfig | None) -> dict:
+    voice = scenario_voice(req, scenarios)
     if llm is not None:
         try:
-            return {**llm_turn(req, scenarios, llm), "engine": f"llm:{llm.model}"}
+            return {**llm_turn(req, scenarios, llm), **voice, "engine": f"llm:{llm.model}"}
         except (urllib.error.URLError, OSError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
             log.warning("LLM недоступна (%s) — ответ по правилам", exc)
-            return {**rules_turn(req, scenarios), "engine": "rules-fallback"}
-    return {**rules_turn(req, scenarios), "engine": "rules"}
+            return {**rules_turn(req, scenarios), **voice, "engine": "rules-fallback"}
+    return {**rules_turn(req, scenarios), **voice, "engine": "rules"}
