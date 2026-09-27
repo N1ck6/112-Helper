@@ -27,6 +27,7 @@ class Call:
     persona: dict | None = None    # собеседник: служба, имя, должность, пол
     card: dict | None = None       # карточка происшествия, по которой звонок
     report: dict | None = None     # для report: {"status": ..., "text": ...}
+    dialed: str | None = None      # номер, набранный с панели телефона (POST /calls {"dial"})
     channel: str | None = None     # имя канала Asterisk (для отбоя)
     status: str = "dialing"
     reason: str | None = None
@@ -92,7 +93,19 @@ class TraineeContexts:
 
     def __init__(self):
         self._items: dict[str, dict] = {}
+        self._available: dict[str, bool] = {}
         self._lock = threading.Lock()
+
+    # Статус оператора в АРМ («доступен» / «недоступен»): недоступному не идут
+    # входящие вызовы от системы/преподавателя (доклады, вызовы 112).
+    def set_available(self, trainee: str, available: bool) -> dict:
+        with self._lock:
+            self._available[trainee] = bool(available)
+        return {"trainee": trainee, "available": bool(available)}
+
+    def available(self, trainee: str | None) -> bool:
+        with self._lock:
+            return self._available.get(trainee, True) if trainee else True
 
     def set(self, trainee: str, context: dict) -> dict:
         item = {**context, "trainee": trainee, "updated_at": time.time()}

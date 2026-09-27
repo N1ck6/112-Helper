@@ -1,6 +1,6 @@
 """HTTP API voice-service (stdlib, без веб-фреймворка).
 
-    GET  /health  -> состояние движков (200 ok / 503 degraded)
+    GET  /health  -> состояние движков (200 — готов, status=degraded при заглушке; 503 — не готов)
     POST /stt     -> WAV (Content-Type: audio/wav) или JSON {"path": "..."} -> JSON с текстом
     POST /tts     -> JSON {"text": "..."} -> audio/wav
                      JSON {"text": "...", "save_as": "name"} -> JSON с путём к файлу
@@ -11,6 +11,7 @@
 Контракт подробно: telephony/README.md, раздел «Этап 5».
 """
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -24,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .audio import AudioFormatError, wav_info
 from .config import Settings
+from .models import download_for
 from .textnorm import normalize_for_tts
 from .stt import EngineNotReady, STTEngine, create_stt
 from .tts import TTSEngine, TTSResult, create_tts
@@ -33,6 +35,10 @@ log = logging.getLogger("voice_service")
 SAVE_AS_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 VOICE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 ALLOWED_RATES = (8000, 16000, 22050, 24000, 44100, 48000)
+
+
+def _as_mock(settings: Settings) -> Settings:
+    return dataclasses.replace(settings, stt_engine="mock", tts_engine="mock")
 
 
 class ApiError(Exception):
@@ -53,21 +59,46 @@ class VoiceService:
                        "tts": {"engine": self.tts.name, "ready": False, "error": None, "voices": []}}
 
     def load(self) -> None:
-        for key, engine in (("stt", self.stt), ("tts", self.tts)):
-            started = time.monotonic()
-            try:
-                engine.load()
-                self.status[key]["ready"] = True
-                if key == "tts":
-                    self.status[key]["voices"] = self.tts.voices()
-                log.info("%s engine=%s загружен за %.1f с", key, engine.name, time.monotonic() - started)
-            except Exception as exc:  # сервис стартует, /health покажет причину
-                self.status[key]["error"] = str(exc)
-                log.error("%s engine=%s не загружен: %s", key, engine.name, exc)
+        for key in ("stt", "tts"):
+            if self._load_engine(key):
+                continue
+            # нет моделей: первый старт стенда — скачать и повторить (MODELS_AUTO_DOWNLOAD=1)
+            if self.settings.models_auto_download and download_for(getattr(self, key).name, self.settings):
+                if self._load_engine(key):
+                    continue
+            # модели так и не появились (нет интернета) — заглушка вместо «мёртвого» сервиса:
+            # звонки идут, /health показывает degraded и причину
+            if self.settings.engine_fallback == "mock":
+                error, wanted = self.status[key]["error"], getattr(self, key).name
+                mock = _as_mock(self.settings)
+                setattr(self, key, create_stt(mock) if key == "stt" else create_tts(mock))
+                if self._load_engine(key):
+                    self.status[key].update(error=error, fallback=True)
+                    log.warning("%s: вместо %s работает заглушка mock", key, wanted)
+
+    def _load_engine(self, key: str) -> bool:
+        engine = getattr(self, key)
+        started = time.monotonic()
+        self.status[key].update(engine=engine.name, ready=False, error=None)
+        try:
+            engine.load()
+            self.status[key]["ready"] = True
+            if key == "tts":
+                self.status[key]["voices"] = self.tts.voices()
+            log.info("%s engine=%s загружен за %.1f с", key, engine.name, time.monotonic() - started)
+            return True
+        except Exception as exc:  # сервис стартует, /health покажет причину
+            self.status[key]["error"] = str(exc)
+            log.error("%s engine=%s не загружен: %s", key, engine.name, exc)
+            return False
 
     @property
     def healthy(self) -> bool:
         return all(s["ready"] for s in self.status.values())
+
+    @property
+    def degraded(self) -> bool:
+        return any(s.get("fallback") for s in self.status.values())
 
     def _require(self, key: str) -> None:
         if not self.status[key]["ready"]:
@@ -206,8 +237,10 @@ class VoiceHandler(BaseHTTPRequestHandler):
 
     # --- эндпоинты -----------------------------------------------------
     def _health(self, _query):
+        # 200 — звонки обслуживаются (в т.ч. заглушкой); degraded — работает заглушка вместо модели
         status = HTTPStatus.OK if self.service.healthy else HTTPStatus.SERVICE_UNAVAILABLE
-        self._json(status, {"status": "ok" if self.service.healthy else "degraded", **self.service.status})
+        label = "ok" if self.service.healthy and not self.service.degraded else "degraded"
+        self._json(status, {"status": label, **self.service.status})
         return status
 
     def _stt(self, query):

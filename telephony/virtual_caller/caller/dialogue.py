@@ -10,7 +10,7 @@ report — старший группы звонит в ДДС с докладо�
 Что говорит собеседник, решает ML-сервис по истории, карточке и persona —
 здесь только телефония и порядок шагов.
 Отказы внешних сервисов не роняют звонок: нет TTS — FALLBACK_SOUND,
-нет STT — «оператор молчал», нет ML — конец звонка.
+нет STT — «оператор молчал», нет ML — фраза о неполадке на линии и конец звонка.
 """
 
 import logging
@@ -31,6 +31,8 @@ log = logging.getLogger("virtual_caller.dialogue")
 SAMPLE_RATE = 8000  # формат "wav" в Asterisk: PCM16 mono 8 кГц
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
 UNKNOWN_NUMBER_TEXT = "Набранный номер не обслуживается."
+# ML недоступен: собеседник не может ответить — говорим об этом, а не молчим до отбоя
+ML_ERROR_TEXT = "Извините, на линии техническая неполадка. Перезвоните, пожалуйста, позже."
 # Собеседник по умолчанию для входящего вызова 112 (заявитель из сценария ML)
 APPLICANT_112 = {"id": "applicant_112", "service": "Заявитель", "name": None,
                  "position": "заявитель", "gender": "female"}
@@ -99,14 +101,19 @@ class DialogueRunner:
         channel = env.get("agi_channel")
         known = self.registry.get(call_id)
 
-        if known is not None:  # исходящий звонок из API: всё уже известно
+        if known is not None and not known.dialed:  # исходящий звонок из API: всё уже известно
             ctx = CallContext(call_id, known.session_id, known.scenario_id or scenario_id, known.call_type,
                               known.trainee, known.persona, known.card, known.report)
-        else:                  # обучающийся набрал номер сам: 7xx, 2XXX, 3000
+        else:  # обучающийся набрал номер сам (с трубки или с панели телефона): 7xx, 2XXX, 3000
             ctx = self._inbound_context(agi, call_id, scenario_id, channel)
-            self.registry.add(Call(call_id=call_id, session_id=ctx.session_id, scenario_id=ctx.scenario_id,
-                                   direction="inbound", trainee=ctx.trainee, call_type=ctx.call_type,
-                                   persona=ctx.persona, card=ctx.card, channel=channel))
+            if known is not None:  # набор с панели: звонок уже в реестре, уточняем по dialplan
+                ctx.session_id, ctx.trainee = known.session_id, known.trainee or ctx.trainee
+                self.registry.update(call_id, call_type=ctx.call_type, persona=ctx.persona, card=ctx.card,
+                                     scenario_id=ctx.scenario_id)
+            else:
+                self.registry.add(Call(call_id=call_id, session_id=ctx.session_id, scenario_id=ctx.scenario_id,
+                                       direction="inbound", trainee=ctx.trainee, call_type=ctx.call_type,
+                                       persona=ctx.persona, card=ctx.card, channel=channel))
         call = self.registry.update(call_id, channel=channel, status="in_progress", answered_at=time.time())
         self.events.emit("call.started", **ctx.ids(), direction=call.direction, channel=channel,
                          caller_id=env.get("agi_callerid"), persona=persona_brief(ctx.persona),
@@ -159,10 +166,13 @@ class DialogueRunner:
                         call_type=ctx.call_type, persona=ctx.persona, context=ctx.ml_context())
                 except ServiceError as exc:
                     self._error(ctx, "ml", exc)
-                    agi.stream_file(self.s.fallback_sound)
+                    self._say(agi, ctx, turn, ML_ERROR_TEXT)
                     reason = "ml_error"
                     break
                 ml_sec = self.clock() - t0
+                if reply.voice and reply.voice != voice_for(ctx.persona):
+                    # ML знает пол собеседника лучше (заявитель сценария 112): меняем голос
+                    ctx.persona = {**(ctx.persona or {}), "gender": reply.voice}
 
                 if reply.reply_text:
                     history.append({"role": "caller", "text": reply.reply_text})

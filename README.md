@@ -46,14 +46,18 @@
 
 ## С чего начать
 
-Минимальный подъём telephony-контура:
+Весь стенд одной командой (из корня репозитория):
 
 ```bash
-cd telephony && cp .env.example .env && docker compose up --build -d
+docker compose up -d --build
 ```
 
-Полный стенд (telephony + backend + frontend + ml + PostgreSQL) —
-корневой `docker compose up --build -d`.
+АРМ — http://localhost:8080 (с другого ПК — `http://<IP>:8080`). Первый старт скачивает
+модели STT/TTS (~0.6 ГБ, интернет нужен один раз). Настройки телефонии — `telephony/.env`
+(необязателен, шаблон `telephony/.env.example`); голос — софтфон на рабочем месте
+(`ws01`…`ws20`, сервер `<IP>:5063`). Подробно — [telephony/README.md](telephony/README.md).
+Сейчас в стенде: телефония, заглушки ML/Backend, frontend; backend / ml / PostgreSQL
+подключаются в корневой `docker-compose.yml` по мере готовности.
 
 Автотесты (нужен уже запущенный Docker-стенд):
 

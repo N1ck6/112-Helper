@@ -118,15 +118,18 @@ class AMIClient:
             return False
 
     def originate(self, *, call_id: str, channel: str, context: str, variables: dict[str, str],
-                  caller_id: str, ring_timeout_sec: int, on_channel=None) -> str:
-        """Звонок на channel; после ответа канал уходит в context,s,1.
+                  caller_id: str, ring_timeout_sec: int, on_channel=None, exten: str = "s") -> str:
+        """Звонок на channel; после ответа канал уходит в context,exten,1.
+
+        exten="s" — учебный звонок (training-run); номер — набор с панели телефона:
+        после ответа трубки рабочее место «набирает» exten, как будто нажали кнопки на телефоне.
 
         Блокирует до ответа/отказа. Возвращает причину из ORIGINATE_REASONS.
         call_id становится UNIQUEID канала (ChannelId) — по нему связываются
         запись, события AGI и API. on_channel(name) вызывается, когда Asterisk
         создал канал (нужно для отбоя во время дозвона).
         """
-        fields = [("Channel", channel), ("Context", context), ("Exten", "s"), ("Priority", "1"),
+        fields = [("Channel", channel), ("Context", context), ("Exten", exten), ("Priority", "1"),
                   ("CallerID", caller_id), ("Timeout", str(ring_timeout_sec * 1000)),
                   ("Async", "true"), ("ChannelId", call_id)]
         fields += [("Variable", f"{k}={v}") for k, v in variables.items()]
@@ -153,6 +156,12 @@ class AMIClient:
             resp = ami.request("Hangup", [("Channel", channel)])
         if resp.get("Response") != "Success":
             raise AMIError(resp.get("Message", "Hangup не выполнен"))
+
+    def channel_alive(self, channel: str) -> bool:
+        """Канал ещё существует (разговор не закончен) — для номеров без AGI (эхо-тест)."""
+        with self.connect() as ami:
+            resp = ami.request("Status", [("Channel", channel)])
+        return resp.get("Response") == "Success"
 
     def endpoints(self) -> list[dict]:
         with self.connect() as ami:

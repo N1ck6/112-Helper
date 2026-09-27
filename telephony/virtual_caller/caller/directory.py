@@ -16,6 +16,17 @@ INCIDENT_112 = "incident_112"  # заявитель -> оператор 112 (г�
 CALL_TYPES = (DISPATCH, REPORT, APPLICANT, INCIDENT_112)
 
 APPLICANT_NUMBER = "3000"      # набор с телефона: перезвонить заявителю текущей карточки
+ECHO = "echo"                  # служебные номера без собеседника (проверка звука)
+
+# Номера, кроме служб 2XXX из directory.json (= extensions.conf, контекст training/internal).
+SPECIAL_NUMBERS = [
+    {"number": APPLICANT_NUMBER, "call_type": APPLICANT, "title": "Заявитель открытой карточки"},
+    {"number": "700", "call_type": INCIDENT_112, "scenario_id": "scenario_001",
+     "title": "Учебный вызов 112: пожар в квартире"},
+    {"number": "701", "call_type": INCIDENT_112, "scenario_id": "scenario_002",
+     "title": "Учебный вызов 112: ДТП с пострадавшими"},
+    {"number": "600", "call_type": ECHO, "title": "Эхо-тест: проверка микрофона и звука"},
+]
 
 # Женские имена в русском в основном оканчиваются на -а/-я (Никита/Илья — исключения).
 _MALE_EXCEPTIONS = {"никита", "илья", "кузьма", "фома", "лука", "савва", "данила"}
@@ -50,6 +61,29 @@ class Directory:
         """Для GET /directory: без служебного текста ответа."""
         return [{k: c.get(k) for k in ("number", "id", "service", "name", "position", "gender")}
                 for c in self.contacts]
+
+    def numbers(self) -> list[dict]:
+        """Телефонная книга рабочего места (GET /numbers): службы + служебные номера."""
+        services = [{"number": c["number"], "call_type": DISPATCH, "title": c["service"],
+                     "name": c.get("name"), "position": c.get("position"), "gender": c.get("gender")}
+                    for c in self.contacts]
+        return services + [dict(n) for n in SPECIAL_NUMBERS]
+
+    def dial_target(self, number: str) -> dict:
+        """Что будет при наборе номера — для подписи звонка до ответа AGI.
+
+        {"call_type": ..., "title": ..., "persona": ..., "handled_by_agi": bool}
+        """
+        contact = self._by_number.get(number)
+        if contact:
+            return {"call_type": DISPATCH, "title": contact["service"],
+                    "persona": self.persona(contact, DISPATCH), "handled_by_agi": True}
+        for n in SPECIAL_NUMBERS:
+            if n["number"] == number:
+                return {"call_type": n["call_type"], "title": n["title"], "persona": None,
+                        "handled_by_agi": n["call_type"] != ECHO, "scenario_id": n.get("scenario_id")}
+        # неизвестный номер: dialplan отдаёт его AGI, собеседник — «номер не обслуживается»
+        return {"call_type": DISPATCH, "title": f"Номер {number}", "persona": None, "handled_by_agi": True}
 
     def resolve(self, ref: str | None) -> dict | None:
         """Номер (2101), id (mchs_101) или название службы из карточки («Служба 101 (МЧС)»)."""

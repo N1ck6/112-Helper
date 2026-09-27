@@ -2,11 +2,15 @@
 
     GET    /health                       состояние AMI и voice-service
     GET    /directory                    справочник служб (номера для набора)
-    GET    /endpoints                    SIP-аккаунты рабочих мест и их регистрация
+    GET    /numbers                      телефонная книга: службы + 3000, 700, 701, 600
+    GET    /endpoints                    SIP-аккаунты рабочих мест: регистрация и статус оператора
     PUT    /trainees/{trainee}/context   какая карточка открыта на рабочем месте
     GET    /trainees/{trainee}/context
     DELETE /trainees/{trainee}/context
+    PUT    /trainees/{trainee}/status    {"available": true|false} — статус оператора из АРМ
+    GET    /trainees/{trainee}/status
     POST   /calls                        учебный звонок (dispatch | report | applicant | incident_112) -> 202
+                                         или {"dial": "2101"} — набор номера с панели телефона
     GET    /calls[?trainee=&session_id=] последние звонки
     GET    /calls/{call_id}              статус, расшифровка, запись
     POST   /calls/{call_id}/hangup       завершить звонок
@@ -28,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .ami import AMIClient, AMIError
 from .calls import ACTIVE, Call, CallRegistry, TraineeContexts
-from .clients import VoiceClient
+from .clients import VoiceClient, reachable
 from .config import Settings
 from .directory import APPLICANT, CALL_TYPES, DISPATCH, INCIDENT_112, REPORT, Directory
 from .dialogue import APPLICANT_112
@@ -40,8 +44,13 @@ ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 # Канал задаётся явно только для тестов/особых случаев: PJSIP/<аккаунт> или Local/<exten>@<context>
 CHANNEL_RE = re.compile(r"^(PJSIP/[A-Za-z0-9_.-]{1,64}|Local/[A-Za-z0-9_.-]{1,64}@[A-Za-z0-9_-]{1,64})$")
 CALL_PATH_RE = re.compile(r"^/calls/([A-Za-z0-9_.-]{1,64})(/hangup)?$")
-TRAINEE_PATH_RE = re.compile(r"^/trainees/([A-Za-z0-9_.-]{1,64})/context$")
+TRAINEE_PATH_RE = re.compile(r"^/trainees/([A-Za-z0-9_.-]{1,64})/(context|status)$")
+DIAL_RE = re.compile(r"^[0-9]{2,6}$")
 RUN_CONTEXT = "training-run"  # см. extensions.conf
+DIAL_CONTEXT = "internal"     # контекст телефонов рабочих мест: набор с панели = набор с трубки
+CHANNEL_POLL_SEC = 2
+# Входящие рабочему месту от системы/преподавателя: не идут оператору со статусом «недоступен»
+INCOMING_TYPES = (REPORT, INCIDENT_112)
 SSE_HEARTBEAT_SEC = 15
 # Что видит обучающийся на экране телефона при входящем звонке
 CALLER_ID_FMT = {
@@ -80,10 +89,15 @@ class CallControl:
     def health(self) -> tuple[HTTPStatus, dict]:
         ami_ok = self.ami.ping()
         voice_ok = self.voice.health()
+        # без ML собеседник не отвечает — звонок сразу завершается фразой о неполадке
+        ml_ok = reachable(self.s.ml_api_url)
+        backend_ok = reachable(self.s.backend_url) if self.s.backend_url else None
         body = {
-            "status": "ok" if ami_ok and voice_ok else "degraded",
+            "status": "ok" if ami_ok and voice_ok and ml_ok else "degraded",
             "ami": ami_ok,
             "voice_service": voice_ok,
+            "ml": ml_ok,
+            "backend": backend_ok,
             "ml_api_url": self.s.ml_api_url,
             "backend_url": self.s.backend_url or None,
             "directory_contacts": len(self.directory.contacts),
@@ -107,22 +121,42 @@ class CallControl:
             raise ApiError(HTTPStatus.NOT_FOUND, f"у {trainee} нет открытой карточки")
         return ctx
 
+    def set_status(self, trainee: str, payload: dict) -> dict:
+        if not isinstance(payload.get("available"), bool):
+            raise ApiError(HTTPStatus.BAD_REQUEST, 'нужно {"available": true|false}')
+        item = self.contexts.set_available(trainee, payload["available"])
+        self.events.emit("operator.status", trainee=trainee, available=item["available"])
+        return item
+
     # --- звонки ---------------------------------------------------------
-    def start_call(self, payload: dict) -> Call:
-        call_type = str(payload.get("call_type") or INCIDENT_112)
-        if call_type not in CALL_TYPES:
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"call_type: {' | '.join(CALL_TYPES)}")
+    def _channel_for(self, payload: dict) -> tuple[str | None, str]:
         trainee = payload.get("trainee")
         channel = payload.get("channel")
+        if trainee is not None and not ID_RE.match(str(trainee)):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "trainee: [A-Za-z0-9_.-], до 64 символов")
         if channel:
             if not CHANNEL_RE.match(str(channel)):
                 raise ApiError(HTTPStatus.BAD_REQUEST, "channel: PJSIP/<аккаунт> или Local/<exten>@<context>")
-        elif trainee and ID_RE.match(str(trainee)):
+        elif trainee:
             channel = f"PJSIP/{trainee}"
         else:
             raise ApiError(HTTPStatus.BAD_REQUEST, "нужен trainee (SIP-аккаунт рабочего места)")
+        return (str(trainee) if trainee else None), str(channel)
 
-        workplace = self.contexts.get(str(trainee) if trainee else None) or {}
+    def start_call(self, payload: dict) -> Call:
+        if payload.get("dial") is not None:
+            return self.dial(payload)
+        call_type = str(payload.get("call_type") or INCIDENT_112)
+        if call_type not in CALL_TYPES:
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"call_type: {' | '.join(CALL_TYPES)}")
+        trainee, channel = self._channel_for(payload)
+        # вызов «от системы» (доклад, вызов 112) не идёт оператору на паузе;
+        # звонок, который обучающийся запустил сам кнопкой, — идёт
+        if (call_type in INCOMING_TYPES and payload.get("initiated_by") != "trainee"
+                and not self.contexts.available(trainee)):
+            raise ApiError(HTTPStatus.CONFLICT, f"оператор {trainee} недоступен (статус «недоступен» в АРМ)")
+
+        workplace = self.contexts.get(trainee) or {}
         card = payload.get("card") if isinstance(payload.get("card"), dict) else workplace.get("card")
         session_id = str(payload.get("session_id") or workplace.get("session_id") or uuid.uuid4())
         if not ID_RE.match(session_id):
@@ -148,7 +182,7 @@ class CallControl:
             persona = dict(APPLICANT_112)
 
         call = self.registry.add(Call(call_id=uuid.uuid4().hex, session_id=session_id, scenario_id=scenario_id,
-                                      direction="outbound", trainee=str(trainee) if trainee else None,
+                                      direction="outbound", trainee=trainee,
                                       call_type=call_type, persona=persona, card=card, report=report))
         self.events.emit("call.dialing", call_id=call.call_id, session_id=session_id, scenario_id=scenario_id,
                          call_type=call_type, trainee=call.trainee, channel=channel,
@@ -175,6 +209,78 @@ class CallControl:
             outcome = "ami_error"
         if outcome == "answered":
             return  # дальше звонок ведёт AGI (DialogueRunner), он же пришлёт call.started/call.ended
+        self._fail(call, outcome)
+
+    # --- набор номера с панели телефона (click-to-dial) --------------------
+    def dial(self, payload: dict) -> Call:
+        """Телефон рабочего места звонит, трубку сняли — Asterisk набирает номер.
+
+        Дальше всё как при наборе с трубки: 2XXX — служба, 3000 — заявитель,
+        700/701 — вызов 112, 600 — эхо-тест, прочее — «номер не обслуживается».
+        """
+        number = str(payload.get("dial") or "").strip()
+        if not DIAL_RE.match(number):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "dial: номер из 2–6 цифр")
+        trainee, channel = self._channel_for(payload)
+        workplace = self.contexts.get(trainee) or {}
+        session_id = str(payload.get("session_id") or workplace.get("session_id") or uuid.uuid4())
+        if not ID_RE.match(session_id):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "session_id: [A-Za-z0-9_.-], до 64 символов")
+        target = self.directory.dial_target(number)
+        call = self.registry.add(Call(call_id=uuid.uuid4().hex, session_id=session_id,
+                                      scenario_id=target.get("scenario_id") or "", direction="inbound",
+                                      trainee=trainee, call_type=target["call_type"], persona=target["persona"],
+                                      card=workplace.get("card"), dialed=number))
+        persona = target["persona"] or {"service": target["title"], "number": number}
+        self.events.emit("call.dialing", call_id=call.call_id, session_id=session_id, scenario_id=call.scenario_id,
+                         call_type=call.call_type, trainee=trainee, channel=channel, dialed=number,
+                         persona={k: persona.get(k) for k in ("service", "name", "position", "number")})
+        threading.Thread(target=self._originate_dial, args=(call, channel, target["handled_by_agi"]),
+                         daemon=True, name=f"dial-{call.call_id[:8]}").start()
+        return call
+
+    def _originate_dial(self, call: Call, channel: str, handled_by_agi: bool) -> None:
+        variables = {"SESSION_ID": call.session_id}
+        if call.trainee:
+            variables["TRAINEE"] = call.trainee  # для Local-каналов автотестов: чья карточка
+        try:
+            outcome = self.ami.originate(
+                call_id=call.call_id, channel=channel, context=DIAL_CONTEXT, exten=call.dialed,
+                variables=variables, caller_id=f'"Набор {call.dialed}" <{call.dialed}>',
+                ring_timeout_sec=self.s.ring_timeout_sec,
+                on_channel=lambda name: self.registry.update(call.call_id, channel=name))
+        except (OSError, AMIError) as exc:
+            log.error("dial call_id=%s: %s", call.call_id, exc)
+            outcome = "ami_error"
+        if outcome != "answered":
+            self._fail(call, outcome)
+            return
+        if handled_by_agi:
+            return  # AGI пришлёт call.started / call.ended
+        self._watch_channel(call)
+
+    def _watch_channel(self, call: Call) -> None:
+        """Эхо-тест и прочие номера без собеседника: события — по жизни канала."""
+        current = self.registry.update(call.call_id, status="in_progress", answered_at=time.time())
+        self.events.emit("call.started", call_id=call.call_id, session_id=call.session_id, scenario_id="",
+                         call_type=call.call_type, trainee=call.trainee, direction="inbound",
+                         channel=current.channel if current else None, dialed=call.dialed, persona=None)
+        started = time.monotonic()
+        while time.monotonic() - started < self.s.max_call_sec:
+            time.sleep(CHANNEL_POLL_SEC)
+            name = (self.registry.get(call.call_id) or call).channel
+            try:
+                if not name or not self.ami.channel_alive(name):
+                    break
+            except (OSError, AMIError):
+                break
+        self.registry.update(call.call_id, status="ended", reason="completed", ended_at=time.time())
+        self.events.emit("call.ended", call_id=call.call_id, session_id=call.session_id, scenario_id="",
+                         call_type=call.call_type, trainee=call.trainee, reason="completed",
+                         duration_sec=round(time.monotonic() - started, 1), recording_url=None,
+                         persona=None, transcript=[])
+
+    def _fail(self, call: Call, outcome: str) -> None:
         current = self.registry.get(call.call_id)
         if current and current.status == "dialing":
             self.registry.update(call.call_id, status="failed", reason=outcome, ended_at=time.time())
@@ -206,9 +312,10 @@ class CallControl:
 
     def endpoints(self) -> list[dict]:
         try:
-            return self.ami.endpoints()
+            items = self.ami.endpoints()
         except (OSError, AMIError) as exc:
             raise ApiError(HTTPStatus.BAD_GATEWAY, f"AMI: {exc}") from exc
+        return [{**e, "available": self.contexts.available(e.get("endpoint"))} for e in items]
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -289,6 +396,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             return c.health()
         if method == "GET" and path == "/directory":
             return HTTPStatus.OK, c.directory.public()
+        if method == "GET" and path == "/numbers":
+            return HTTPStatus.OK, c.directory.numbers()
         if method == "GET" and path == "/endpoints":
             return HTTPStatus.OK, c.endpoints()
         if path == "/calls":
@@ -302,7 +411,13 @@ class ApiHandler(BaseHTTPRequestHandler):
         if m and method == "POST" and m.group(2):
             return HTTPStatus.ACCEPTED, c.hangup(m.group(1)).to_dict()
         m = TRAINEE_PATH_RE.match(path)
-        if m:
+        if m and m.group(2) == "status":
+            trainee = m.group(1)
+            if method == "PUT":
+                return HTTPStatus.OK, c.set_status(trainee, self._read_json())
+            if method == "GET":
+                return HTTPStatus.OK, {"trainee": trainee, "available": c.contexts.available(trainee)}
+        elif m:
             trainee = m.group(1)
             if method == "PUT":
                 return HTTPStatus.OK, c.set_context(trainee, self._read_json())

@@ -64,6 +64,20 @@ CORS: `Access-Control-Allow-Origin: CORS_ORIGINS` (по умолчанию `*`),
 «Служба 101 (МЧС)», «ОМВД», «Упр. района», «Мосводоканал» и т.п. (поиск по `aliases`).
 Источник — `virtual_caller/directory.json` (добавить службу = добавить объект).
 
+### `GET /numbers` — телефонная книга рабочего места
+Службы (`call_type: dispatch`) + служебные номера:
+```json
+[{"number": "2101", "call_type": "dispatch", "title": "Служба 101 (МЧС)", "name": "Петров Андрей", …},
+ {"number": "3000", "call_type": "applicant", "title": "Заявитель открытой карточки"},
+ {"number": "700", "call_type": "incident_112", "scenario_id": "scenario_001", "title": "Учебный вызов 112: пожар в квартире"},
+ {"number": "701", …}, {"number": "600", "call_type": "echo", "title": "Эхо-тест: проверка микрофона и звука"}]
+```
+
+### `PUT /trainees/{trainee}/status` — статус оператора в АРМ
+`{"available": false}` — «недоступен»: вызовы **от системы** (`report`, `incident_112` без
+`"initiated_by": "trainee"`) получают `409`. Звонки, которые обучающийся запускает сам, идут всегда.
+`GET` — текущий статус (по умолчанию `true`). Статус виден и в `GET /endpoints` (`available`).
+
 ### `PUT /trainees/{trainee}/context` — что открыто на рабочем месте
 
 Frontend/Backend сообщает при открытии карточки; нужно для звонков, которые обучающийся
@@ -88,6 +102,8 @@ Frontend/Backend сообщает при открытии карточки; ну
 | `card`, `session_id` | все, необяз. | по умолчанию — из контекста рабочего места |
 | `report` | report, необяз. | `{"status": "arrival" \| "in_progress" \| "completed" \| "refused", "text": "свой текст"}` |
 | `scenario_id` | incident_112 | сценарий ML |
+| `initiated_by` | необяз. | `"trainee"` — обучающийся нажал кнопку сам (статус «недоступен» не мешает) |
+| `dial` | набор номера | вместо `call_type`: `"2101"` — см. ниже |
 | `channel` | тесты | вместо `trainee`: `Local/9001@autotest` — имитация рабочего места |
 
 ```json
@@ -105,13 +121,18 @@ Frontend/Backend сообщает при открытии карточки; ну
 На экране телефона обучающегося: `dispatch` — «Служба 101 (МЧС)», `report` — «Мастер аварийной
 бригады (Мосводоканал)», `applicant` — «Заявитель: …».
 
+**Набор номера с панели** (`{"dial": "2101", "trainee": "ws01"}`): телефон рабочего места звонит
+(«Набор 2101»), обучающийся снимает трубку — Asterisk набирает номер, дальше всё как при наборе
+с трубки (гудки, собеседник по dialplan). Объект звонка: `dialed`, `call_type` по номеру
+(`dispatch` / `applicant` / `incident_112` / `echo`), `persona` для служб. Номер — 2–6 цифр.
+
 ### `GET /calls/{call_id}`, `GET /calls?trainee=&session_id=`
 
 | `status` | |
 |---|---|
 | `dialing` | звонит телефон рабочего места |
 | `in_progress` | разговор идёт |
-| `ended` | `reason`: `completed`, `operator_hangup`, `max_turns`, `max_duration`, `ml_error`, `unknown_number`, `internal_error` |
+| `ended` | `reason`: `completed`, `operator_hangup`, `max_turns`, `max_duration`, `ml_error` (собеседник сказал о неполадке), `unknown_number`, `internal_error` |
 | `failed` | `reason`: `no_answer`, `busy`, `rejected`, `unavailable` (телефон не зарегистрирован), `congestion`, `timeout`, `ami_error` |
 
 `transcript`: `{"turn": 0, "role": "caller" | "operator", "text": "...", "audio": "/tts/….wav" | "/recordings/….wav"}`
@@ -121,7 +142,7 @@ Frontend/Backend сообщает при открытии карточки; ну
 
 ### `GET /endpoints` — телефоны рабочих мест
 ```json
-[{"endpoint": "ws01", "state": "Not in use", "registered": true, "active_channels": ""}, …]
+[{"endpoint": "ws01", "state": "Not in use", "registered": true, "active_channels": "", "available": true}, …]
 ```
 
 ### `GET /events?trainee=ws01` — поток событий в браузер (Server-Sent Events)
@@ -131,9 +152,11 @@ Frontend/Backend сообщает при открытии карточки; ну
 
 ### `GET /health`
 ```json
-{"status": "ok", "ami": true, "voice_service": true, "ml_api_url": "http://mocks:8093/ml",
- "backend_url": "http://mocks:8093/backend", "directory_contacts": 10, "active_calls": 0}
+{"status": "ok", "ami": true, "voice_service": true, "ml": true, "backend": true,
+ "ml_api_url": "http://mocks:8093/ml", "backend_url": "http://mocks:8093/backend",
+ "directory_contacts": 12, "active_calls": 0}
 ```
+`status: degraded` — нет ML или voice-service (`ml: false` — собеседники не ответят). `503` — нет Asterisk.
 
 ---
 
@@ -146,12 +169,13 @@ Frontend/Backend сообщает при открытии карточки; ну
 
 | `event` | Когда | Доп. поля |
 |---|---|---|
-| `call.dialing` | принят `POST /calls` | `channel`, `persona` (service, name, position, number) |
+| `call.dialing` | принят `POST /calls` | `channel`, `persona` (service, name, position, number), `dialed` (набор) |
 | `call.failed` | не дозвонились | `reason` |
 | `call.started` | разговор начался | `direction`, `channel`, `caller_id`, `persona`, `card_id` |
 | `call.utterance` | реплика | `turn`, `role`, `text`, `audio`, `latency` (`ml_sec`, `tts_sec` / `stt_sec`) |
 | `call.error` | сбой сервиса | `stage` (`ml`/`tts`/`stt`/`internal`), `error` |
 | `call.ended` | конец | `reason`, `duration_sec`, `recording_url`, `persona`, `card_id`, `transcript` |
+| `operator.status` | статус в АРМ | `trainee`, `available` (без `call_id`) |
 
 Для Backend: `call.ended` — готовая «отработка» карточки (служба = `persona.service`, кто принял =
 `persona.name`, суть = `transcript`, время, запись). Для оценки ML — `transcript` доклада диспетчера.
@@ -178,8 +202,10 @@ Frontend/Backend сообщает при открытии карточки; ну
 - `turn: 0`, `operator_text: null` — начало: первая фраза собеседника («Слушаю вас», доклад, «Алло?»).
 - `history` включает последнюю реплику оператора; `operator_text` дублирует её; `""` — молчание.
 - Ответ: `{"reply_text": "…", "end_call": false}` — текст озвучивается голосом `persona.gender`;
-  `end_call: true` — собеседник кладёт трубку после реплики. Лишние поля игнорируются.
-- Нужен быстрый ответ (цель < 2 с; таймаут 30 с). Ошибка → звонок завершается (`ml_error`).
+  `end_call: true` — собеседник кладёт трубку после реплики. Необязательное `"voice": "male" | "female"`
+  меняет голос (пол заявителя из сценария 112). Лишние поля игнорируются.
+- Нужен быстрый ответ (цель < 2 с; таймаут 30 с). Ошибка → собеседник говорит «на линии техническая
+  неполадка», звонок завершается (`ml_error`).
 - Сокращения адресов («ул.», «д.») раскрываются перед синтезом — ML может отдавать адрес как в карточке.
 
 Эталон — `mocks/ml_dialogue.py`: правила по `call_type` (приветствие, переспрос адреса, если его нет
@@ -210,18 +236,45 @@ voice-service: `POST /tts {"text", "voice": "male"|"female", "cache": true | "sa
 
 ## 5. Подключение Frontend
 
-Минимальный код (браузер, без библиотек):
+**Подключено.** Корневой `docker compose up -d`: nginx на `:8080` отдаёт frontend и на том же адресе
+проксирует телефонию — `/telephony/*` → API `:8092` (с SSE), `/recordings/*` → записи
+([deploy/nginx/default.conf](../deploy/nginx/default.conf)). Один origin: нет CORS и смешанного
+контента, работает с других ПК по LAN. Адрес API — `APP_CONFIG.TELEPHONY_API_URL` (`frontend/js/config.js`):
+`"telephony"` на стенде, `"http://localhost:8092"` для страницы с GitHub Pages / файла.
+
+Звонки в интерфейсе — [frontend/js/telephony.js](../frontend/js/telephony.js):
+
+| Где | Что | Запрос |
+|---|---|---|
+| низ справа | панель «Телефон»: аккаунт, телефон подключён, ML доступен, звонок, реплики, «Завершить», запись | `/endpoints`, `/health`, `/events`, `hangup` |
+| панель | номеронабиратель (мышь/клавиатура) + справочник | `{"dial"}`, `/numbers` |
+| панель, диспетчер | «Доклад старшего группы» — входящий доклад службы карточки (этапы по очереди) | `report` |
+| панель | отработки по открытой карточке: служба, номер, кто принял, суть, время, запись | — |
+| карточка оператора и диспетчера | ☎ у каждой службы | `dispatch` |
+| карточка оператора, шапка | «☎ Вызов голосом» — учебный заявитель 112 звонит на телефон | `incident_112` |
+| карточка диспетчера | «Перезвонить и уточнить» | `applicant` |
+| открытие/правка карточки | карточка → контекст рабочего места (набор 2XXX / 3000 с трубки) | `PUT context` |
+| шапка: доступен / недоступен | статус оператора | `PUT status` |
+
+Связь с `app.js` — события `dds:card-open`, `dds:card-close`, `dds:review-open`, `dds:review-close`,
+`dds:callback`, `dds:operator-status` и `window.DDS.addCallLog(id, entry)` — отработка сохраняется
+в карточке (`incident.calls[]`). Рабочее место: `session.workstation` (когда появится во входе),
+`?ws=ws02` в адресе (запоминается) или `ws01`.
+
+Минимальный код для своей реализации (браузер, без библиотек):
 ```js
-const TEL = "http://localhost:8092";          // в config.js
+const TEL = "telephony";                      // через nginx стенда; напрямую — "http://localhost:8092"
 const WS = "ws01";                            // SIP-аккаунт этого рабочего места
 
 // открыли карточку -> телефония знает контекст (набор 2XXX/3000 с телефона)
 await fetch(`${TEL}/trainees/${WS}/context`, {method: "PUT", headers: {"Content-Type": "application/json"},
   body: JSON.stringify({session_id, card})});
 
-// кнопка звонка у службы в карточке
-const call = await (await fetch(`${TEL}/calls`, {method: "POST", headers: {"Content-Type": "application/json"},
-  body: JSON.stringify({call_type: "dispatch", trainee: WS, service: "Служба 101 (МЧС)"})})).json();
+// кнопка звонка у службы в карточке / набор номера
+await fetch(`${TEL}/calls`, {method: "POST", headers: {"Content-Type": "application/json"},
+  body: JSON.stringify({call_type: "dispatch", trainee: WS, service: "Служба 101 (МЧС)", initiated_by: "trainee"})});
+await fetch(`${TEL}/calls`, {method: "POST", headers: {"Content-Type": "application/json"},
+  body: JSON.stringify({dial: "2101", trainee: WS})});
 
 // состояние звонка и реплики вживую
 const es = new EventSource(`${TEL}/events?trainee=${WS}`);
@@ -229,16 +282,16 @@ es.addEventListener("call.dialing",   e => toast("Звонок: поднимит
 es.addEventListener("call.started",   e => toast("Соединено"));
 es.addEventListener("call.utterance", e => showLine(JSON.parse(e.data)));   // role, text
 es.addEventListener("call.ended",     e => toast("Разговор завершён"));     // recording_url, transcript
-es.addEventListener("call.failed",    e => toast("Не дозвонились: " + JSON.parse(e.data).reason)); // unavailable = софтфон не зарегистрирован
+es.addEventListener("call.failed",    e => toast("Не дозвонились: " + JSON.parse(e.data).reason)); // unavailable = телефон не зарегистрирован
 ```
 Входящий доклад старшего (`report`) придёт тем же потоком (`call.dialing` с `call_type: "report"`).
 
 ## 6. Подключение настоящих ML и Backend
 
 ```env
-COMPOSE_PROFILES=                  # без заглушек
 ML_API_URL=http://ml:8000          # телефония добавит /dialogue/turn
 BACKEND_URL=http://backend:8000    # телефония добавит /telephony/events; пусто — только журнал
 ```
 Сервисы в одной Docker-сети (корневой `docker-compose.yml` подключает compose ролей через `include`).
-Проверка: `GET /health` → новые адреса; `python telephony/demo/demo_calls.py dispatch`.
+Сервис `mocks` можно оставить (простаивает) или убрать из `telephony/docker-compose.yml`.
+Проверка: `GET /health` → новые адреса, `"ml": true`; `python telephony/demo/demo_calls.py dispatch`.
