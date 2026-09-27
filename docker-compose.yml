@@ -1,0 +1,34 @@
+# Общая точка сборки полного стенда тренажёра — запуск одной командой:
+#
+#   docker compose up -d --build
+#
+# http://localhost:8080 — АРМ (с другого ПК: http://<IP>:8080), телефония на том же адресе.
+# Каждая роль держит свой compose в своей папке и подключается сюда через include.
+# Сейчас: телефония (+ заглушки ML/Backend) и frontend. Backend / ML / PostgreSQL —
+# строкой в include или сервисом ниже; тогда ML_API_URL / BACKEND_URL в telephony/.env.
+# Настройки телефонии — telephony/.env (необязателен, шаблон telephony/.env.example).
+# Не запускать одновременно с `docker compose up` из telephony/ (те же имена контейнеров).
+
+include:
+  - path: telephony/docker-compose.yml
+
+services:
+  # Frontend — статические файлы из frontend/ (код — зона роли Frontend, здесь только раздача)
+  # + прокси телефонии на том же адресе: /telephony/ (API, события), /recordings/ (записи).
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: trainer-frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - virtual-caller
+      - audio-tools
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped

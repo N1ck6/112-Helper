@@ -1,0 +1,149 @@
+# Telephony-контур: SIP (Asterisk) + виртуальный абонент (голосовой цикл, API звонков)
+# + аудио + voice-service (STT/TTS) + заглушки ML/Backend.
+# Запуск (из папки telephony/):  docker compose up --build -d
+#
+# Заглушки ML/Backend (сервис mocks) поднимаются всегда: без ML собеседники молчат.
+# При интеграции: ML_API_URL / BACKEND_URL настоящих сервисов в .env — mocks тогда простаивает.
+# .env не обязателен: у всех переменных есть значения по умолчанию (пароли — сменить!).
+
+services:
+  asterisk:
+    build: ./asterisk
+    container_name: telephony-asterisk
+    depends_on:
+      - virtual-caller
+    ports:
+      - "${EXTERNAL_SIGNALING_PORT:-5063}:5060/udp"
+      - "${EXTERNAL_SIGNALING_PORT:-5063}:5060/tcp"
+      - "5041:5038/tcp"                 # AMI
+      - "10000-10059:10000-10059/udp"   # RTP (= rtp.conf), до 30 разговоров
+    volumes:
+      - ./asterisk/conf:/etc/asterisk-templates:ro
+      - asterisk-logs:/var/log/asterisk
+      # Записи: MixMonitor (<call_id>.wav) и реплики оператора (<call_id>_opNN.wav).
+      # Bind mount — файлы сразу видны на хосте и voice-service (для STT).
+      - ../data/recordings:/recordings
+      # Реплики абонента от TTS: voice-service пишет, Asterisk играет STREAM FILE /tts/<name>.
+      - ../data/tts:/tts:ro
+    environment:
+      - AMI_PASSWORD=${AMI_PASSWORD:-changeme_ami_pass}
+      - SIP_ALICE_PASSWORD=${SIP_ALICE_PASSWORD:-changeme_alice}
+      - SIP_BOB_PASSWORD=${SIP_BOB_PASSWORD:-changeme_bob}
+      - EXTERNAL_MEDIA_ADDRESS=${EXTERNAL_MEDIA_ADDRESS:-127.0.0.1}
+      - EXTERNAL_SIGNALING_PORT=${EXTERNAL_SIGNALING_PORT:-5063}
+      # рабочие места обучающихся ws01..wsNN (логин = ws01, пароль общий для класса)
+      - TRAINEE_ACCOUNTS=${TRAINEE_ACCOUNTS:-20}
+      - TRAINEE_PASSWORD=${TRAINEE_PASSWORD:-changeme_ws}
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Виртуальный абонент: FastAGI 4573 (голосовой цикл SIP -> STT -> ML -> TTS -> SIP)
+  # и HTTP API звонков 8092 для Backend (telephony/API.md).
+  virtual-caller:
+    build: ./virtual_caller
+    container_name: telephony-virtual-caller
+    depends_on:
+      - voice-service
+      - mocks
+    ports:
+      - "${CALL_API_PORT:-8092}:8092"
+    environment:
+      - VOICE_SERVICE_URL=http://voice-service:8091
+      - ML_API_URL=${ML_API_URL:-http://mocks:8093/ml}
+      - BACKEND_URL=${BACKEND_URL-http://mocks:8093/backend}
+      - AMI_HOST=asterisk
+      - AMI_PORT=5038
+      - AMI_USER=call-control
+      - AMI_PASSWORD=${AMI_PASSWORD:-changeme_ami_pass}
+      - RING_TIMEOUT_SEC=${RING_TIMEOUT_SEC:-30}
+      - MAX_TURNS=${MAX_TURNS:-12}
+      - MAX_CALL_SEC=${MAX_CALL_SEC:-300}
+      - MAX_UTTERANCE_SEC=${MAX_UTTERANCE_SEC:-20}
+      - SILENCE_SEC=${SILENCE_SEC:-2}
+      - RINGBACK_SEC=${RINGBACK_SEC:-3}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - RECORDINGS_BASE_URL=${RECORDINGS_BASE_URL:-http://localhost:8090}
+    volumes:
+      - ../data/sessions:/data
+    restart: unless-stopped
+
+  audio-tools:
+    build: ./audio_tools
+    container_name: telephony-audio-tools
+    depends_on:
+      - asterisk
+    ports:
+      - "8090:8090"   # http://localhost:8090/ — список записей, playback в браузере
+    volumes:
+      - ../data/recordings:/recordings
+      - ../data/sessions:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # STT/TTS как отдельный сменный сервис (HTTP API, порт 8091).
+  # Движки: STT_ENGINE=faster_whisper|mock, TTS_ENGINE=piper|mock.
+  # Модели — в ./models: при первом старте скачиваются сами (~0.6 ГБ, нужен интернет
+  # один раз), дальше работа без сети. Нет сети и моделей — заглушки mock, /health: degraded.
+  voice-service:
+    build: ./voice_service
+    container_name: telephony-voice-service
+    ports:
+      - "${VOICE_SERVICE_PORT:-8091}:8091"
+    environment:
+      - STT_ENGINE=${STT_ENGINE:-faster_whisper}
+      - TTS_ENGINE=${TTS_ENGINE:-piper}
+      - STT_LANGUAGE=${STT_LANGUAGE:-ru}
+      - WHISPER_MODEL=${WHISPER_MODEL:-small}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
+      - WHISPER_COMPUTE_TYPE=${WHISPER_COMPUTE_TYPE:-int8}
+      - PIPER_VOICE=${PIPER_VOICE:-ru_RU-irina-medium}
+      - PIPER_VOICE_FEMALE=${PIPER_VOICE_FEMALE:-ru_RU-irina-medium}
+      - PIPER_VOICE_MALE=${PIPER_VOICE_MALE:-ru_RU-dmitri-medium}
+      - WHISPER_WORKERS=${WHISPER_WORKERS:-2}
+      - TTS_SAMPLE_RATE=${TTS_SAMPLE_RATE:-8000}
+      - MOCK_STT_TEXT=${MOCK_STT_TEXT:-Назовите адрес. Есть пострадавшие? Бригада уже выехала.}
+      - MODELS_AUTO_DOWNLOAD=${MODELS_AUTO_DOWNLOAD:-1}
+      - ENGINE_FALLBACK=${ENGINE_FALLBACK:-mock}
+      - AUDIO_ROOT=/recordings
+      - TTS_OUTPUT_DIR=/tts
+    volumes:
+      - ./models:/models
+      - ../data/recordings:/recordings:ro
+      - ../data/tts:/tts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 900s   # первый старт: загрузка моделей
+    restart: unless-stopped
+
+  # Заглушки ML (/ml) и Backend (/backend) до интеграции с командой.
+  # http://localhost:8093/backend/telephony/events — события звонков.
+  mocks:
+    build: ./mocks
+    container_name: telephony-mocks
+    ports:
+      - "${MOCKS_PORT:-8093}:8093"
+    environment:
+      # rules — правила; llm — OpenAI-совместимая LLM по адресу LLM_API_URL (при сбое — правила)
+      - DIALOGUE_ENGINE=${DIALOGUE_ENGINE:-rules}
+      - LLM_API_URL=${LLM_API_URL:-}
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5:7b}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_TIMEOUT_SEC=${LLM_TIMEOUT_SEC:-20}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # LLM на хосте (Ollama) из контейнера
+    restart: unless-stopped
+
+volumes:
+  asterisk-logs:
