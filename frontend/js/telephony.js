@@ -11,7 +11,10 @@
  *   • отработки: каждый звонок по карточке сохраняется в ней (служба, номер, кто принял,
  *     суть, время, запись) — window.DDS.addCallLog из app.js;
  *   • статус оператора «доступен / недоступен» передаётся телефонии: на паузе
- *     не приходят входящие вызовы от системы.
+ *     не приходят входящие вызовы от системы;
+ *   • режим «В браузере» (js/webphone.js): звонок прямо со страницы — микрофон и
+ *     синтез речи браузера, софтфон не нужен. По умолчанию включается сам, если
+ *     софтфон рабочего места не подключён или телефония недоступна.
  *
  * Связь с app.js — события dds:card-open / dds:card-close / dds:review-open /
  * dds:review-close / dds:callback / dds:operator-status и объект window.DDS.
@@ -112,16 +115,16 @@
   .tel-dot.live{background:var(--accent-500);animation:tel-pulse 1s infinite}
   @keyframes tel-pulse{50%{opacity:.35}}
   .tel-title{font-weight:700;white-space:nowrap}
-  .tel-sub{color:var(--ink-600);margin-left:auto;font-size:.72rem;text-align:right}
+  .tel-sub{color:var(--ink-600);margin-left:auto;font-size:.9em;text-align:right}
   .tel-body{border-top:1px solid var(--border-600);padding:10px 12px;display:grid;gap:10px;overflow-y:auto;overflow-x:hidden}
   .tel-body>*{min-width:0} .tel-logitem{overflow-wrap:anywhere}
   .tel-widget.collapsed .tel-body{display:none}
-  .tel-section-title{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-600);font-weight:700}
+  .tel-section-title{font-size:.85em;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-600);font-weight:700}
   .tel-call-title{font-weight:600} .tel-state{color:var(--ink-400)}
   .tel-log{max-height:200px;overflow-y:auto;display:grid;gap:6px}
   .tel-line{padding:6px 8px;border-radius:var(--radius-md);background:var(--panel-700);line-height:1.35}
   .tel-line.operator{background:transparent;border:1px solid var(--border-600)}
-  .tel-line b{display:block;font-size:.68rem;color:var(--ink-600);font-weight:600;margin-bottom:2px}
+  .tel-line b{display:block;font-size:.85em;color:var(--ink-600);font-weight:600;margin-bottom:2px}
   .tel-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   .tel-btn{font:inherit;font-weight:600;cursor:pointer;border-radius:var(--radius-md);padding:6px 10px;
     border:1px solid var(--border-600);background:var(--panel-700);color:var(--ink-100)}
@@ -129,15 +132,15 @@
   .tel-btn.primary{background:var(--success-500);border-color:transparent;color:#fff}
   .tel-btn.danger{background:var(--accent-500);border-color:transparent;color:#fff}
   .tel-btn:disabled{opacity:.45;cursor:default}
-  .tel-display{flex:1;min-width:0;font:600 1rem var(--font-mono);letter-spacing:.08em;padding:6px 8px;
+  .tel-display{flex:1;min-width:0;font:600 1.25em var(--font-mono);letter-spacing:.08em;padding:6px 8px;
     border-radius:var(--radius-md);border:1px solid var(--border-600);background:var(--panel-900);color:var(--ink-100)}
   .tel-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-  .tel-keys .tel-btn{font-family:var(--font-mono);font-size:.95rem;padding:7px 0}
+  .tel-keys .tel-btn{font-family:var(--font-mono);font-size:1.2em;padding:.55em 0}
   .tel-select{flex:1;min-width:0;font:inherit;padding:6px;border-radius:var(--radius-md);
     border:1px solid var(--border-600);background:var(--panel-900);color:var(--ink-100)}
   .tel-logs{display:grid;gap:6px}
   .tel-logitem{padding:6px 8px;border-radius:var(--radius-md);border:1px solid var(--border-600);line-height:1.4}
-  .tel-logitem .muted,.tel-hint{color:var(--ink-600);font-size:.72rem}
+  .tel-logitem .muted,.tel-hint{color:var(--ink-600);font-size:.9em}
   .tel-widget audio{width:100%;height:32px}
   .tel-chip-call{font:inherit;cursor:pointer;border:none;background:var(--accent-500);color:#fff;border-radius:999px;
     padding:1px 8px;margin-left:6px;font-size:.7rem;font-weight:700}
@@ -157,6 +160,35 @@
   .tel-num:hover,.tel-num:focus-visible{background:var(--panel-700);outline:none}
   .tel-num b{font:700 1rem var(--font-mono);min-width:46px}
   .tel-num span{flex:1;color:var(--ink-400);overflow-wrap:anywhere}
+  .tel-dialer{display:grid;gap:10px}
+  .tel-seg{display:flex;flex:1;min-width:0;border:1px solid var(--border-600);border-radius:var(--radius-md);overflow:hidden}
+  .tel-seg button{flex:1;font:inherit;font-weight:600;cursor:pointer;border:none;padding:5px 6px;
+    background:transparent;color:var(--ink-400);white-space:nowrap}
+  .tel-seg button.active{background:var(--accent-500);color:#fff}
+  .tel-say{display:flex;gap:6px}
+  .tel-say input{flex:1;min-width:0;font:inherit;padding:6px 8px;border-radius:var(--radius-md);
+    border:1px solid var(--border-600);background:var(--panel-900);color:var(--ink-100)}
+  .tel-say[hidden]{display:none}
+  .tel-mic{color:var(--accent-500);font-weight:700}
+  /* Встроенная панель в карточке оператора: всё помещается без прокрутки.
+     Во время разговора номеронабиратель скрыт, лог показывает последние реплики
+     (старые уходят под верхний край), отработки — две последние. */
+  .tel-widget.docked{position:static;z-index:auto;width:auto;max-height:none;flex:1;min-height:0;
+    box-shadow:none;border-radius:var(--radius-md);font-size:1.05em}
+  .tel-widget.docked .tel-head{cursor:default}
+  .tel-widget.docked .tel-body{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;overflow:hidden;padding:8px 10px}
+  .tel-widget.docked .tel-body>*{flex:none}
+  .tel-widget.docked .tel-log{flex:1 1 0;min-height:2.5em;max-height:none;overflow:hidden;display:flex;
+    flex-direction:column;justify-content:flex-end;gap:5px;
+    -webkit-mask-image:linear-gradient(transparent,#000 2.2em);mask-image:linear-gradient(transparent,#000 2.2em)}
+  .tel-widget.docked .tel-line{flex:none;padding:4px 7px}
+  .tel-widget.docked .tel-dialer{gap:6px}
+  .tel-widget.docked .tel-keys{gap:4px}
+  .tel-widget.docked .tel-keys .tel-btn{font-size:1.05em;padding:.3em 0}
+  .tel-widget.docked .tel-display{font-size:1.1em;padding:4px 8px}
+  .tel-widget.docked .tel-btn{padding:5px 9px}
+  .tel-widget.docked [data-el=hint]{display:none}
+  .tel-widget.docked.busy .tel-dialer{display:none}
   @media (max-width:720px){.tel-popover{left:16px;right:16px;width:auto;bottom:auto;top:16px}}
   `;
   document.head.appendChild(style);
@@ -177,37 +209,83 @@
         <div class="tel-state" data-el="state"></div>
       </div>
       <div class="tel-log" data-el="log"></div>
+      <form class="tel-say" data-el="say" hidden>
+        <input data-el="sayText" autocomplete="off" placeholder="Говорите или напечатайте реплику" aria-label="Реплика">
+        <button type="submit" class="tel-btn" aria-label="Сказать">➤</button>
+      </form>
       <div class="tel-row">
         <button type="button" class="tel-btn danger" data-el="hangup" hidden>Завершить</button>
         <button type="button" class="tel-btn" data-el="report" hidden>Доклад старшего группы</button>
       </div>
       <audio controls preload="none" data-el="audio" hidden></audio>
 
-      <div class="tel-section-title">Набор номера</div>
-      <div class="tel-row">
-        <input class="tel-display" data-el="display" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="2101" aria-label="Номер">
-        <button type="button" class="tel-btn" data-el="back" aria-label="Стереть">⌫</button>
-      </div>
-      <div class="tel-keys" data-el="keys"></div>
-      <div class="tel-row">
-        <button type="button" class="tel-btn" data-el="book" aria-expanded="false" aria-haspopup="dialog">☰ Справочник</button>
-        <button type="button" class="tel-btn primary" data-el="dial">Вызов</button>
+      <div class="tel-dialer">
+        <div class="tel-section-title">Набор номера</div>
+        <div class="tel-row">
+          <input class="tel-display" data-el="display" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="2101" aria-label="Номер">
+          <button type="button" class="tel-btn" data-el="back" aria-label="Стереть">⌫</button>
+        </div>
+        <div class="tel-keys" data-el="keys"></div>
+        <div class="tel-row">
+          <button type="button" class="tel-btn" data-el="book" aria-expanded="false" aria-haspopup="dialog">☰ Справочник</button>
+          <button type="button" class="tel-btn primary" data-el="dial">Вызов</button>
+        </div>
       </div>
 
       <div class="tel-section-title" data-el="logs-title" hidden>Отработки по карточке</div>
       <div class="tel-logs" data-el="logs"></div>
 
       <div class="tel-hint" data-el="hint"></div>
-      <div class="tel-row"><button type="button" class="tel-btn" data-el="change">Сменить рабочее место</button></div>
+      <div class="tel-row">
+        <div class="tel-seg" role="group" aria-label="Как идёт голос">
+          <button type="button" data-mode="browser" title="Звонок прямо со страницы: микрофон и динамики компьютера">В браузере</button>
+          <button type="button" data-mode="sip" title="Голос через софтфон / IP-телефон рабочего места">Софтфон</button>
+        </div>
+        <button type="button" class="tel-btn" data-el="change" title="Сменить рабочее место">⇄ Место</button>
+      </div>
     </div>`;
   document.body.appendChild(widget);
   const el = {};
   widget.querySelectorAll("[data-el]").forEach((n) => (el[n.dataset.el] = n));
   el.ws.textContent = WS;
-  el.hint.textContent =
+  el.report.hidden = session.role !== "dispatcher";
+
+  // ------------------------------------------ режим голоса: браузер / софтфон ---
+  const web = window.DDS_WEBPHONE && window.DDS_WEBPHONE.supported ? window.DDS_WEBPHONE : null;
+  let voiceMode = "";  // "browser" | "sip" | "" — авто: браузер, пока софтфон не подключён
+  try { voiceMode = localStorage.getItem("ddsVoiceMode") || ""; } catch (e) { /* без хранилища — авто */ }
+
+  const SIP_HINT =
     `Голос — через софтфон рабочего места: сервер ${location.hostname || "<IP стенда>"}:5063 (UDP), ` +
     `логин ${WS}. Трубку берёте на телефоне, звонком управляет эта панель.`;
-  el.report.hidden = session.role !== "dispatcher";
+  const WEB_HINT =
+    "Звонок идёт прямо в браузере: говорите в микрофон (Chrome, Edge, Яндекс.Браузер) " +
+    "или печатайте реплики. Софтфон не нужен.";
+
+  function useBrowser() {
+    if (!web) return false;
+    if (voiceMode === "browser") return true;
+    if (voiceMode === "sip") return false;
+    return registered !== true;
+  }
+
+  function renderMode() {
+    const browser = useBrowser();
+    widget.querySelectorAll(".tel-seg [data-mode]").forEach((b) => {
+      b.classList.toggle("active", (b.dataset.mode === "browser") === browser);
+      b.disabled = b.dataset.mode === "browser" && !web;
+    });
+    el.hint.textContent = browser ? WEB_HINT : SIP_HINT;
+    widget.querySelector(".tel-head").title = el.hint.textContent;
+  }
+
+  widget.querySelector(".tel-seg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-mode]");
+    if (!b || b.disabled || busy()) return;
+    voiceMode = b.dataset.mode;
+    try { localStorage.setItem("ddsVoiceMode", voiceMode); } catch (err) { /* режим только на эту страницу */ }
+    renderStatus();
+  });
 
   "123456789*0#".split("").forEach((k) => {
     const b = document.createElement("button");
@@ -227,7 +305,36 @@
     widget.classList.toggle("collapsed", !open);
     document.body.classList.toggle("tel-open", open);
   }
-  widget.querySelector(".tel-head").addEventListener("click", () => setOpen(widget.classList.contains("collapsed")));
+  widget.querySelector(".tel-head").addEventListener("click", () => {
+    if (!widget.classList.contains("docked")) setOpen(widget.classList.contains("collapsed"));
+  });
+
+  // В карточке оператора панель встроена в правую колонку окна (#phone-dock),
+  // вне карточки — плавающая в углу экрана.
+  const dock = $("phone-dock");
+  let undockTimer = null;
+  let floatOpen = false;
+  function setDocked(on) {
+    clearTimeout(undockTimer);
+    if (!dock) return;
+    openBook(false);
+    if (on) {
+      if (widget.classList.contains("docked")) return;
+      floatOpen = !widget.classList.contains("collapsed");
+      dock.textContent = "";
+      dock.appendChild(widget);
+      widget.classList.add("docked");
+      widget.classList.remove("collapsed");
+      document.body.classList.remove("tel-open");
+    } else {
+      // ждём окончания анимации закрытия окна, чтобы колонка не опустела раньше времени
+      undockTimer = setTimeout(() => {
+        widget.classList.remove("docked");
+        document.body.appendChild(widget);
+        setOpen(floatOpen);
+      }, 320);
+    }
+  }
   el.change.addEventListener("click", () => {
     const next = prompt("SIP-аккаунт рабочего места (ws01…ws20):", WS);
     if (next && next.trim() && next.trim() !== WS) {
@@ -269,6 +376,10 @@
 
   function openBook(open) {
     if (open) renderBook();
+    // у встроенной панели справочник открывается слева от неё
+    const r = widget.classList.contains("docked") && open ? widget.getBoundingClientRect() : null;
+    pop.style.right = r ? Math.max(16, window.innerWidth - r.left + 12) + "px" : "";
+    pop.style.bottom = r ? Math.max(16, window.innerHeight - r.bottom) + "px" : "";
     pop.hidden = !open;
     el.book.setAttribute("aria-expanded", open ? "true" : "false");
   }
@@ -298,9 +409,20 @@
     if (e.key === "Escape" && !pop.hidden) openBook(false);
   });
 
+  // без телефонии справочник стенда — встроенный в браузерный телефон
+  if (web) standNumbers = web.directory().map((c) => ({ number: c.number, title: c.service, name: c.name }));
   api("GET", "/numbers").then((list) => {
-    standNumbers = Array.isArray(list) ? list : [];
+    if (Array.isArray(list) && list.length) standNumbers = list;
   }).catch(() => {});
+  if (web) api("GET", "/directory").then((list) => web.setDirectory(list)).catch(() => {});
+
+  // ☎ из справочной базы и других разделов: document.dispatchEvent(new CustomEvent("dds:dial", {detail: {number}}))
+  document.addEventListener("dds:dial", (e) => {
+    const number = String((e.detail && e.detail.number) || "").replace(/\D/g, "");
+    if (!number) return;
+    el.display.value = number;
+    dialNumber();
+  });
 
   // ------------------------------------------------------ состояние звонка ---
   let registered = null;  // софтфон зарегистрирован; null — телефония недоступна
@@ -312,12 +434,17 @@
   const busy = () => !!(current && current.status !== "ended");
 
   function renderStatus() {
-    el.dot.className = "tel-dot" + (busy() ? " live" : registered && mlOk ? " ok" : registered === null ? "" : " bad");
+    const browser = useBrowser();
+    el.dot.className = "tel-dot" + (busy() ? " live" : browser || (registered && mlOk) ? " ok" : registered === null ? "" : " bad");
     if (current && current.status === "dialing") el.sub.textContent = "вызов…";
     else if (current && current.status === "in_progress") el.sub.textContent = "идёт разговор";
+    else if (browser) el.sub.textContent = "готов · в браузере";
     else if (registered === null) el.sub.textContent = "телефония недоступна";
     else if (!registered) el.sub.textContent = "телефон не подключён";
     else el.sub.textContent = mlOk ? "готов" : "собеседники недоступны (ML)";
+    widget.classList.toggle("busy", busy());
+    el.say.hidden = !(busy() && current.web && current.status === "in_progress");
+    renderMode();
     el.hangup.hidden = !busy();
     document.querySelectorAll(".tel-chip-call, .tel-voice-112, .tel-callback").forEach((b) => (b.disabled = busy()));
     el.dial.disabled = busy();
@@ -356,7 +483,7 @@
   }
 
   function showCall(callId, callType, persona, state, dialed) {
-    current = { call_id: callId, call_type: callType, persona: persona, status: "dialing" };
+    current = { call_id: callId, call_type: callType, persona: persona, status: "dialing", web: /^web-/.test(callId || "") };
     const title = CALL_TYPE_LABEL[callType] || "Звонок";
     el.call.textContent = `${title}${persona ? ": " + who(persona) : dialed ? ": " + dialed : ""}`;
     el.state.textContent = state || "";
@@ -384,7 +511,7 @@
       service: persona.service || null,
       number: persona.number || t.dialed || null,
       accepted_by: [persona.position, persona.name].filter(Boolean).join(" ") || null,
-      summary: said.length ? said[0].text : null,
+      summary: said.length ? said.map((x) => x.text).join(" ").slice(0, 300) : null,
       status: status,
       duration_sec: d.duration_sec || 0,
       recording_url: d.recording_url || null,
@@ -397,9 +524,12 @@
   function renderLogs() {
     const incident = card && window.DDS ? window.DDS.getIncident(card.id) : null;
     const logs = (incident && incident.calls) || [];
+    // во встроенной панели — только две последние, чтобы не появлялась прокрутка
+    const limit = widget.classList.contains("docked") ? 2 : logs.length;
     el["logs-title"].hidden = !logs.length;
+    el["logs-title"].textContent = "Отработки по карточке" + (logs.length > limit ? ` · последние ${limit} из ${logs.length}` : "");
     el.logs.innerHTML = "";
-    logs.slice().reverse().forEach((c) => {
+    logs.slice().reverse().slice(0, limit).forEach((c) => {
       const item = document.createElement("div");
       item.className = "tel-logitem";
       const head = document.createElement("div");
@@ -425,14 +555,21 @@
   }
 
   // ------------------------------------------------------------ события ---
+  // Одни обработчики для событий телефонии (SSE) и браузерного телефона (webphone.js)
   const es = new EventSource(`${TEL}/events?trainee=${encodeURIComponent(WS)}`);
-  const on = (type, fn) => es.addEventListener(type, (e) => {
-    try { fn(JSON.parse(e.data)); } catch (err) { /* повреждённое событие пропускаем */ }
-  });
+  const handlers = {};
+  const on = (type, fn) => {
+    handlers[type] = fn;
+    es.addEventListener(type, (e) => {
+      try { fn(JSON.parse(e.data)); } catch (err) { /* повреждённое событие пропускаем */ }
+    });
+  };
   on("call.dialing", (d) => {
     track(d.call_id, { call_type: d.call_type, persona: d.persona, dialed: d.dialed });
     if (!current || current.call_id !== d.call_id) showCall(d.call_id, d.call_type, d.persona, "", d.dialed);
-    el.state.textContent = ["incident_112", "report"].includes(d.call_type)
+    const incoming = ["incident_112", "report"].includes(d.call_type);
+    if (d.web) el.state.textContent = incoming ? "Входящий вызов…" : "Гудки…";
+    else el.state.textContent = incoming
       ? "Входящий вызов — снимите трубку"
       : "Телефон звонит — снимите трубку, дальше пойдёт вызов";
   });
@@ -482,6 +619,7 @@
 
   el.hangup.addEventListener("click", async () => {
     if (!current || !current.call_id) return;
+    if (current.web) return web.hangup();
     try {
       await api("POST", `/calls/${current.call_id}/hangup`);
     } catch (e) {
@@ -489,9 +627,42 @@
     }
   });
 
+  // --------------------------------------------------- звонок из браузера ---
+  el.say.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const line = el.sayText.value.trim();
+    if (!line) return;
+    el.sayText.value = "";
+    web.say(line);
+  });
+
+  function placeWebCall(body) {
+    const opts = Object.assign({ trainee: WS, session_id: session.sid || "web" }, body);
+    if (!opts.card && card) opts.card = currentCard();
+    // голосовой заявитель 112 — сценарий, назначенный карточке преподавателем
+    if (opts.call_type === "incident_112" && card && card.incident && card.incident.scenarioId) opts.scenario_id = card.incident.scenarioId;
+    web.start(opts, {
+      emit: (type, d) => { if (handlers[type]) handlers[type](d); },
+      onListen: (on) => {
+        if (!current || !current.web || current.status === "ended") return el.state.classList.remove("tel-mic");
+        el.state.textContent = on ? "🎤 Говорите — или напечатайте реплику" : "Разговор";
+        el.state.classList.toggle("tel-mic", on);
+        el.sayText.placeholder = "Говорите или напечатайте реплику";
+        if (on && (!window.DDS_WEBPHONE.speechInput || current.noMic)) el.sayText.focus();
+      },
+      onInterim: (heard) => { if (heard) el.sayText.placeholder = "🎤 " + heard; },
+      onMicError: () => {
+        if (current) current.noMic = true;
+        el.state.textContent = "Микрофон или распознавание недоступны — печатайте реплики";
+        el.sayText.focus();
+      },
+    });
+  }
+
   async function placeCall(body, label) {
     setOpen(true);
     if (busy()) return;
+    if (useBrowser()) return placeWebCall(body);
     try {
       const call = await api("POST", "/calls", Object.assign({ trainee: WS, initiated_by: "trainee" }, body));
       track(call.call_id, { call_type: call.call_type, persona: call.persona, dialed: call.dialed });
@@ -564,9 +735,9 @@
     renderLogs();
   }
 
-  document.addEventListener("dds:card-open", (e) => openCard(e.detail, "sheet"));
+  document.addEventListener("dds:card-open", (e) => { setDocked(true); openCard(e.detail, "sheet"); });
   document.addEventListener("dds:review-open", (e) => openCard(e.detail, "review"));
-  document.addEventListener("dds:card-close", closeCard);
+  document.addEventListener("dds:card-close", () => { setDocked(false); closeCard(); });
   document.addEventListener("dds:review-close", closeCard);
   document.addEventListener("dds:callback", (e) => {
     placeCall({ call_type: "applicant", card: reviewCard(e.detail) }, "Звонок заявителю");

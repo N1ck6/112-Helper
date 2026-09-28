@@ -6,4 +6,7 @@ window.APP_CONFIG = {
     location.protocol === "file:" || location.hostname.endsWith("github.io")
       ? "http://localhost:8092"
       : "telephony",
+  // Звонок «В браузере» (js/webphone.js): реплики собеседников из ML по контракту
+  // POST {ML_DIALOGUE_URL}/dialogue/turn (telephony/API.md §3). Пусто — встроенные правила.
+  ML_DIALOGUE_URL: "",
 };

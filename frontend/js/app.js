@@ -698,8 +698,6 @@
   const clusterEl = document.getElementById("sheet-cluster");
   const timerBox = document.getElementById("sheet-timer");
   const timerNormEl = document.getElementById("sheet-timer-norm");
-  const stripWho = document.getElementById("caller-strip-who");
-  const stripText = document.getElementById("caller-strip-text");
   const phoneEl = document.getElementById("sheet-phone");
   const timeEl = document.getElementById("sheet-time");
   const phoneAonInput = document.getElementById("sheet-phone-aon");
@@ -710,9 +708,6 @@
   const typeTilesEl = document.getElementById("type-tiles");
   const surveyField = document.getElementById("field-survey");
   const surveyEl = document.getElementById("survey");
-  const chatLog = document.getElementById("chat-log");
-  const chatInput = document.getElementById("chat-input");
-  const chatSend = document.getElementById("chat-send");
   const addressField = document.getElementById("field-address");
   const addressInput = document.getElementById("sheet-address-input");
   const addrInputs = {
@@ -758,10 +753,6 @@
   let currentFlags = { injured: false, notOnSite: false, ambulanceRefused: false, blocked: false };
   let telephonyResetTimer = null;
   let manualPause = false;
-
-  function scenarioOf(call) {
-    return D.getScenarios().find((s) => s.id === call.scenarioId) || null;
-  }
 
   function initSheet() {
     typeTilesEl.innerHTML = INCIDENT_TYPES.map(
@@ -822,14 +813,6 @@
       renderServiceChips();
     });
 
-    chatSend.addEventListener("click", sendChat);
-    chatInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        sendChat();
-      }
-    });
-
     document.getElementById("btn-no-contact").addEventListener("click", () => finishAsEmpty("no_contact"));
     document.getElementById("btn-call-failed").addEventListener("click", () => finishAsEmpty("call_failed"));
 
@@ -844,32 +827,6 @@
 
     document.getElementById("sheet-cancel").addEventListener("click", closeSheet);
     document.getElementById("sheet-submit").addEventListener("click", submitCard);
-  }
-
-  function renderChat() {
-    chatLog.innerHTML = (currentCall.chat || [])
-      .slice(-4)
-      .map((m) => `<div class="chat-msg ${m.role}"><b>${m.role === "operator" ? "Вы" : "Заявитель (ИИ)"}</b>${esc(m.text)}</div>`)
-      .join("") || `<div class="chat-empty">Сообщений пока нет</div>`;
-    chatLog.scrollTop = chatLog.scrollHeight;
-    const lastCaller = (currentCall.chat || []).slice().reverse().find((m) => m.role === "caller");
-    stripWho.textContent = currentCall.phone && currentCall.phone !== "—" ? currentCall.phone : "номер не определён";
-    stripText.textContent = lastCaller ? "«" + lastCaller.text + "»" : "Сообщений пока нет";
-  }
-
-  function sendChat() {
-    const text = chatInput.value.trim();
-    if (!text || !currentCall) return;
-    const call = currentCall;
-    chatInput.value = "";
-    call.chat.push({ role: "operator", text: text });
-    renderChat();
-    saveIncidents();
-    setTimeout(() => {
-      call.chat.push({ role: "caller", text: D.callerReply(scenarioOf(call), text) });
-      if (currentCall === call) renderChat();
-      saveIncidents();
-    }, 500);
   }
 
   function finishAsEmpty(reason) {
@@ -1121,14 +1078,6 @@
     phoneEl.textContent = call.phone;
     timeEl.textContent = call.time;
 
-    const sc = scenarioOf(call);
-    if (!call.chat.length && sc) {
-      call.chat.push({ role: "caller", text: sc.opening });
-      saveIncidents();
-    }
-    chatInput.value = "";
-    renderChat();
-
     if (call.status === "review" && call.dds.decision === "declined" && call.dds.comment) {
       showToast(`Не принята диспетчером: ${call.dds.comment}`);
     }
@@ -1283,10 +1232,6 @@
       .map((s) => `<span class="service-chip">${iconHtml("call", 12)}${esc(s)}</span>`)
       .join("") || `<span class="cell-muted">Службы не назначены</span>`;
 
-    document.getElementById("review-chat").innerHTML = (call.chat || [])
-      .map((m) => `<div class="chat-msg ${m.role}"><b>${m.role === "operator" ? "Оператор" : "Заявитель (ИИ)"}</b>${esc(m.text)}</div>`)
-      .join("") || `<span class="cell-muted">Переписки нет</span>`;
-
     const st = ddsState(call);
     const isReview = call.status === "review";
     const pending = isReview && call.dds.decision === "pending";
@@ -1333,7 +1278,7 @@
     }, 320);
   }
 
-  const FIT_MAX = 11;
+  const FIT_MAX = 10;
   const FIT_MIN = 7.5;
 
   function fitWindow(sheet) {
