@@ -11,8 +11,12 @@
       document.documentElement.setAttribute("data-theme", theme);
     })();
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+  <link rel="shortcut icon" href="favicon.ico" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <meta name="theme-color" content="#ff0053" />
+  <link rel="stylesheet" href="css/icons.css" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
@@ -20,15 +24,14 @@
   <div class="login-page">
 
     <button type="button" class="theme-toggle" data-theme-toggle aria-label="Переключить тему">
-      <span class="icon" style="width:16px; height:16px;"></span>
+      <span class="tt-seg tt-sun"><span class="icon i-sun"></span></span>
+      <span class="tt-seg tt-moon"><span class="icon i-moon"></span></span>
     </button>
 
     <div class="login-card">
 
       <div class="login-brand">
-        <span class="login-brand-icon">
-          <span class="icon" style="--icon-src:url('/assets/icons/misc_phone.png'); width:18px; height:18px;"></span>
-        </span>
+        <svg class="brand-mark" viewBox="0 0 64 64" role="img" aria-label="112" xmlns="http://www.w3.org/2000/svg"><rect width="64" height="64" rx="14" fill="#ff0053"/><g fill="none" stroke="#fff" stroke-width="5.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 27 L18 21 V44"/><path d="M26 27 L33 21 V44"/><path d="M40 28 C40 23.5 43.2 21 47.5 21 C52 21 55 23.6 55 28 C55 31.4 53.2 33.6 50.2 36.2 L40 44 H55.5"/></g></svg>
         <div>
           <h1>АРМ ДДС</h1>
           <span>Система‑112 · учебный контур</span>
@@ -38,7 +41,8 @@
       <div class="role-switch" role="tablist" aria-label="Роль пользователя" id="role-switch">
         <span class="role-switch-indicator" id="role-indicator"></span>
         <button type="button" class="role-btn active" data-role="student" role="tab" aria-selected="true">Оператор</button>
-        <button type="button" class="role-btn" data-role="teacher" role="tab" aria-selected="false">Диспетчер</button>
+        <button type="button" class="role-btn" data-role="dispatcher" role="tab" aria-selected="false">Диспетчер</button>
+        <button type="button" class="role-btn" data-role="teacher" role="tab" aria-selected="false">Преподаватель</button>
         <button type="button" class="role-btn" data-role="admin" role="tab" aria-selected="false">Администратор</button>
       </div>
 
@@ -52,10 +56,17 @@
           <input type="password" name="password" autocomplete="current-password" required />
         </label>
 
+        <label id="ws-field">
+          Рабочее место
+          <select name="workstation" id="ws-select"></select>
+        </label>
+
         <p class="form-error" id="form-error" hidden>Введите логин и пароль</p>
 
         <button type="submit" class="btn-primary" id="login-submit" style="width:100%; padding:11px;">Войти</button>
       </form>
+
+      <p class="login-mode" id="login-mode">Проверка подключения к Backend…</p>
 
       <p class="login-footnote">ЛОКАЛЬНЫЙ КОНТУР · БЕЗ ДОСТУПА К ВНЕШНИМ СЕТЯМ</p>
 
@@ -63,8 +74,20 @@
 
   </div>
 
-  <script src="js/config.js"></script>
-  <script src="js/theme.js"></script>
-  <script src="js/auth.js"></script>
+  <script src="js/config.js" onerror="(window.__missing=window.__missing||[]).push(this.getAttribute('src'))"></script>
+  <script src="js/data.js" onerror="(window.__missing=window.__missing||[]).push(this.getAttribute('src'))"></script>
+  <script src="js/api.js" onerror="(window.__missing=window.__missing||[]).push(this.getAttribute('src'))"></script>
+  <script src="js/theme.js" onerror="(window.__missing=window.__missing||[]).push(this.getAttribute('src'))"></script>
+  <script src="js/auth.js" onerror="(window.__missing=window.__missing||[]).push(this.getAttribute('src'))"></script>
+  <script>
+    (function () {
+      var miss = window.__missing || [];
+      if (!miss.length) return;
+      var b = document.createElement("div");
+      b.setAttribute("style", "position:fixed;left:0;right:0;top:0;z-index:9999;background:#b00020;color:#fff;font:600 13px/1.4 sans-serif;padding:8px 14px;text-align:center");
+      b.textContent = "Не найдены файлы: " + miss.join(", ") + ". Скопируйте их в папку js/ — без них часть функций не работает (например, переключение темы).";
+      document.body.appendChild(b);
+    })();
+  </script>
 </body>
 </html>

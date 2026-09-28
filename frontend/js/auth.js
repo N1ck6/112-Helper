@@ -1,18 +1,35 @@
 (function () {
+  const D = window.DDS_DATA;
+  const API = window.DDS_API;
   const roleButtons = document.querySelectorAll(".role-btn");
   const roleSwitch = document.getElementById("role-switch");
   const roleIndicator = document.getElementById("role-indicator");
   const form = document.getElementById("login-form");
   const submitBtn = document.getElementById("login-submit");
   const errorEl = document.getElementById("form-error");
+  const wsField = document.getElementById("ws-field");
+  const wsSelect = document.getElementById("ws-select");
+  const modeEl = document.getElementById("login-mode");
+
+  const ROLES_WITH_WORKSTATION = ["student", "dispatcher"];
+  const MIN_DEMO_PASSWORD = 4;
 
   let selectedRole = "student";
+
+  wsSelect.innerHTML = D.WORKSTATIONS.map((ws) => `<option value="${ws}">${ws}</option>`).join("");
+  wsSelect.value = localStorage.getItem("ddsWorkstation") || D.WORKSTATIONS[0];
 
   function moveIndicatorTo(btn) {
     const switchRect = roleSwitch.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
     roleIndicator.style.setProperty("--x", `${btnRect.left - switchRect.left}px`);
+    roleIndicator.style.setProperty("--y", `${btnRect.top - switchRect.top}px`);
     roleIndicator.style.setProperty("--w", `${btnRect.width}px`);
+    roleIndicator.style.setProperty("--h", `${btnRect.height}px`);
+  }
+
+  function refreshWorkstationField() {
+    wsField.hidden = ROLES_WITH_WORKSTATION.indexOf(selectedRole) === -1;
   }
 
   roleButtons.forEach((btn) => {
@@ -24,21 +41,32 @@
       btn.classList.add("active");
       btn.setAttribute("aria-selected", "true");
       selectedRole = btn.dataset.role;
+      refreshWorkstationField();
       moveIndicatorTo(btn);
     });
   });
 
+  refreshWorkstationField();
   requestAnimationFrame(() => moveIndicatorTo(document.querySelector(".role-btn.active")));
   window.addEventListener("resize", () => moveIndicatorTo(document.querySelector(".role-btn.active")));
+
+  API.probe().then((ok) => {
+    modeEl.textContent = ok
+      ? "Backend подключён: вход проверяется на сервере"
+      : `Backend недоступен — демо-режим: пароль не проверяется (введите любой от ${MIN_DEMO_PASSWORD} символов)`;
+    modeEl.classList.toggle("is-online", !!ok);
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     errorEl.hidden = true;
 
     const username = form.username.value.trim();
-    const password = form.password.value.trim();
+    const password = form.password.value;
+    const workstation = ROLES_WITH_WORKSTATION.indexOf(selectedRole) !== -1 ? wsSelect.value : null;
 
     if (!username || !password) {
+      errorEl.textContent = "Введите логин и пароль";
       errorEl.hidden = false;
       return;
     }
@@ -47,10 +75,12 @@
     submitBtn.textContent = "Проверка…";
 
     try {
-      const session = await mockLogin({ username, password, role: selectedRole });
-
+      const session = await login({ username, password, role: selectedRole, workstation });
+      session.sid = "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       localStorage.setItem("ddsSession", JSON.stringify(session));
-
+      API.touchSession(session);
+      if (workstation) localStorage.setItem("ddsWorkstation", workstation);
+      API.log("login", `Вход: ${session.fullName}${workstation ? " (" + workstation + ")" : ""}, режим: ${session.mode}`);
       window.location.href = "dashboard.html";
     } catch (err) {
       errorEl.textContent = err.message || "Не удалось войти. Проверьте данные.";
@@ -60,19 +90,38 @@
     }
   });
 
-  function mockLogin({ username, password, role }) {
+  async function login(payload) {
+    let remote = null;
+    try {
+      remote = await API.login(payload);
+    } catch (err) {
+      throw new Error(err.message || "Неверный логин или пароль");
+    }
+    if (remote) {
+      return Object.assign({ role: payload.role, fullName: payload.username, workstation: payload.workstation }, remote, { mode: "backend", loggedInAt: new Date().toISOString() });
+    }
+    return mockLogin(payload);
+  }
+
+  function mockLogin({ username, password, role, workstation }) {
     return new Promise((resolve, reject) => {
       setTimeout(() => {
         if (username.length < 2) {
           reject(new Error("Слишком короткий логин"));
           return;
         }
+        if (password.length < MIN_DEMO_PASSWORD) {
+          reject(new Error(`Пароль: не менее ${MIN_DEMO_PASSWORD} символов`));
+          return;
+        }
         resolve({
           role,
           fullName: username,
+          workstation: workstation,
+          mode: "demo",
           loggedInAt: new Date().toISOString(),
         });
-      }, 500);
+      }, 400);
     });
   }
 })();

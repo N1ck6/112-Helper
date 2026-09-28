@@ -56,6 +56,11 @@
     try { return JSON.parse(localStorage.getItem("ddsSession") || "null") || {}; } catch (e) { return {}; }
   })();
 
+  if (["student", "dispatcher"].indexOf(session.role) === -1) {
+    window.DDS_TELEPHONY = false;
+    return;
+  }
+
   const WS = (function () {
     const fromUrl = new URLSearchParams(location.search).get("ws");
     try {
@@ -138,6 +143,21 @@
     padding:1px 8px;margin-left:6px;font-size:.7rem;font-weight:700}
   .tel-chip-call:disabled{opacity:.45;cursor:default}
   .tel-voice-112{margin-left:auto}
+  .tel-row .tel-btn[data-el=book]{flex:1}
+  .tel-popover{position:fixed;right:calc(min(340px,100vw - 32px) + 28px);bottom:16px;z-index:160;width:310px;
+    max-height:min(72vh,540px);overflow:auto;background:var(--panel-800);border:1px solid var(--border-600);
+    border-radius:var(--radius-lg);box-shadow:var(--shadow-panel);padding:10px;color:var(--ink-100);
+    font-family:var(--font-ui);font-size:.8rem;animation:tel-pop .18s ease-out}
+  @keyframes tel-pop{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
+  .tel-popover[hidden]{display:none}
+  .tel-pop-head{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:4px}
+  .tel-pop-close{font:inherit;border:none;background:transparent;color:var(--ink-600);cursor:pointer;font-size:1.1rem;line-height:1}
+  .tel-pop-title{font-size:.66rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-600);font-weight:700;margin:8px 0 4px}
+  .tel-num{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:var(--radius-md);cursor:pointer}
+  .tel-num:hover,.tel-num:focus-visible{background:var(--panel-700);outline:none}
+  .tel-num b{font:700 1rem var(--font-mono);min-width:46px}
+  .tel-num span{flex:1;color:var(--ink-400);overflow-wrap:anywhere}
+  @media (max-width:720px){.tel-popover{left:16px;right:16px;width:auto;bottom:auto;top:16px}}
   `;
   document.head.appendChild(style);
 
@@ -170,7 +190,7 @@
       </div>
       <div class="tel-keys" data-el="keys"></div>
       <div class="tel-row">
-        <select class="tel-select" data-el="book" aria-label="Справочник"><option value="">Справочник…</option></select>
+        <button type="button" class="tel-btn" data-el="book" aria-expanded="false" aria-haspopup="dialog">☰ Справочник</button>
         <button type="button" class="tel-btn primary" data-el="dial">Вызов</button>
       </div>
 
@@ -187,7 +207,7 @@
   el.hint.textContent =
     `Голос — через софтфон рабочего места: сервер ${location.hostname || "<IP стенда>"}:5063 (UDP), ` +
     `логин ${WS}. Трубку берёте на телефоне, звонком управляет эта панель.`;
-  el.report.hidden = session.role !== "teacher";
+  el.report.hidden = session.role !== "dispatcher";
 
   "123456789*0#".split("").forEach((k) => {
     const b = document.createElement("button");
@@ -202,9 +222,12 @@
   el.back.addEventListener("click", () => (el.display.value = el.display.value.slice(0, -1)));
   el.display.addEventListener("input", () => (el.display.value = el.display.value.replace(/\D/g, "").slice(0, 6)));
   el.display.addEventListener("keydown", (e) => { if (e.key === "Enter") dialNumber(); });
-  el.book.addEventListener("change", () => { if (el.book.value) el.display.value = el.book.value; });
   el.dial.addEventListener("click", dialNumber);
-  widget.querySelector(".tel-head").addEventListener("click", () => widget.classList.toggle("collapsed"));
+  function setOpen(open) {
+    widget.classList.toggle("collapsed", !open);
+    document.body.classList.toggle("tel-open", open);
+  }
+  widget.querySelector(".tel-head").addEventListener("click", () => setOpen(widget.classList.contains("collapsed")));
   el.change.addEventListener("click", () => {
     const next = prompt("SIP-аккаунт рабочего места (ws01…ws20):", WS);
     if (next && next.trim() && next.trim() !== WS) {
@@ -214,13 +237,69 @@
     }
   });
 
+  // ------------------------------------------- справочник номеров (всплывающее окно) ---
+  const EMERGENCY = [
+    { number: "101", title: "Пожарная охрана · МЧС" },
+    { number: "102", title: "Полиция" },
+    { number: "103", title: "Скорая медицинская помощь" },
+    { number: "104", title: "Аварийная газовая служба" },
+    { number: "112", title: "Единая служба спасения" },
+  ];
+  let standNumbers = [];
+  const escHtml = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const pop = document.createElement("div");
+  pop.className = "tel-popover";
+  pop.hidden = true;
+  pop.setAttribute("role", "dialog");
+  pop.setAttribute("aria-label", "Справочник номеров");
+  document.body.appendChild(pop);
+
+  function numRow(n) {
+    return `<div class="tel-num" data-number="${escHtml(n.number)}" tabindex="0"><b>${escHtml(n.number)}</b><span>${escHtml(n.title)}${n.name ? " (" + escHtml(n.name) + ")" : ""}</span><button type="button" class="tel-chip-call tel-num-call" data-dial="${escHtml(n.number)}" title="Позвонить">☎</button></div>`;
+  }
+
+  function renderBook() {
+    pop.innerHTML = `
+      <div class="tel-pop-head"><span>Справочник номеров</span><button type="button" class="tel-pop-close" aria-label="Закрыть">×</button></div>
+      <div class="tel-pop-title">Экстренные службы</div>
+      ${EMERGENCY.map(numRow).join("")}
+      ${standNumbers.length ? `<div class="tel-pop-title">Номера учебного стенда</div>${standNumbers.map(numRow).join("")}` : ""}`;
+  }
+
+  function openBook(open) {
+    if (open) renderBook();
+    pop.hidden = !open;
+    el.book.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  el.book.addEventListener("click", () => openBook(pop.hidden));
+  pop.addEventListener("click", (e) => {
+    if (e.target.closest(".tel-pop-close")) return openBook(false);
+    const callBtn = e.target.closest("[data-dial]");
+    const row = e.target.closest("[data-number]");
+    if (!row) return;
+    el.display.value = row.dataset.number;
+    openBook(false);
+    if (callBtn) dialNumber();
+    else el.display.focus();
+  });
+  pop.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches("[data-number]")) {
+      el.display.value = e.target.dataset.number;
+      openBook(false);
+      el.display.focus();
+    }
+  });
+  document.addEventListener("mousedown", (e) => {
+    if (!pop.hidden && !pop.contains(e.target) && e.target !== el.book) openBook(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !pop.hidden) openBook(false);
+  });
+
   api("GET", "/numbers").then((list) => {
-    list.forEach((n) => {
-      const o = document.createElement("option");
-      o.value = n.number;
-      o.textContent = `${n.number} — ${n.title}${n.name ? " (" + n.name + ")" : ""}`;
-      el.book.appendChild(o);
-    });
+    standNumbers = Array.isArray(list) ? list : [];
   }).catch(() => {});
 
   // ------------------------------------------------------ состояние звонка ---
@@ -283,7 +362,7 @@
     el.state.textContent = state || "";
     el.log.innerHTML = "";
     el.audio.hidden = true;
-    widget.classList.remove("collapsed");
+    setOpen(true);
     renderStatus();
   }
 
@@ -411,7 +490,7 @@
   });
 
   async function placeCall(body, label) {
-    widget.classList.remove("collapsed");
+    setOpen(true);
     if (busy()) return;
     try {
       const call = await api("POST", "/calls", Object.assign({ trainee: WS, initiated_by: "trainee" }, body));

@@ -1,23 +1,33 @@
 (function () {
+  const D = window.DDS_DATA;
+  const API = window.DDS_API;
+
   const ROLE_LABELS = {
     student: "Оператор",
-    teacher: "Диспетчер",
+    dispatcher: "Диспетчер",
+    teacher: "Преподаватель",
     admin: "Администратор",
   };
 
-  const ICONS = {
-    call: "/assets/icons/misc_phone.png",
-    nature: "/assets/icons/nature_storm.png",
-    medicine: "/assets/icons/med_heart.png",
-    infrastructure: "/assets/icons/med_house.png",
-    shield: "/assets/icons/misc_shield.png",
-    warning: "/assets/icons/misc_warning.png",
-  };
+  const ICON_KEYS = ["call", "nature", "medicine", "infrastructure", "shield", "warning"];
 
   function iconHtml(key, size) {
-    const src = ICONS[key];
-    if (!src) return "";
-    return `<span class="icon" style="--icon-src:url('${src}'); width:${size}px; height:${size}px;" aria-hidden="true"></span>`;
+    if (ICON_KEYS.indexOf(key) === -1) return "";
+    return `<span class="icon i-${key}" style="width:${size}px; height:${size}px;" aria-hidden="true"></span>`;
+  }
+
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  }
+
+  const hhmm = () => new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+
+  const session = JSON.parse(localStorage.getItem("ddsSession") || "null");
+
+  if (!session || !ROLE_LABELS[session.role]) {
+    localStorage.removeItem("ddsSession");
+    window.location.href = "index.html";
+    return;
   }
 
   const INCIDENT_TYPES = [
@@ -57,12 +67,25 @@
     return { country: "Россия", region: "Москва", locality: "Москва", okrug: "", district: "", street: "", house: "", korpus: "", flat: "", entrance: "", floor: "", code: "", descriptive: "" };
   }
 
-  function newIncident(id, time, phone) {
+  function newDds() {
+    return { decision: "pending", decisionAt: null, comment: null, reaction: null, reactionAt: null, history: [] };
+  }
+
+  function nextNumber() {
+    const n = Number(localStorage.getItem("ddsCardCounter") || 36814850) + 1;
+    localStorage.setItem("ddsCardCounter", String(n));
+    return String(n);
+  }
+
+  function defaults() {
     return {
-      id: id,
-      time: time,
-      phone: phone,
       status: "new",
+      source: "operator",
+      workstation: null,
+      scenarioId: null,
+      clusterId: null,
+      seq: null,
+      seqTotal: null,
       types: [],
       address: emptyAddress(),
       addressLine: null,
@@ -75,33 +98,126 @@
       phoneOnsite: null,
       flags: { injured: false, notOnSite: false, ambulanceRefused: false, blocked: false },
       injuredCount: null,
+      survey: {},
+      chat: [],
       fillSeconds: null,
+      sentAt: null,
+      dds: newDds(),
+      teacherGrade: null,
       dispatcherComment: null,
       emptyReason: null,
     };
   }
 
+  function poolFor(ws) {
+    const all = D.getScenarios().filter((s) => s.approved);
+    const a = ws ? D.getAssignments()[ws] : null;
+    if (a && a.clusterId) {
+      const inCluster = all.filter((s) => s.clusterId === a.clusterId);
+      if (inCluster.length) return inCluster;
+    }
+    if (a && a.scenarioId) {
+      const one = all.find((s) => s.id === a.scenarioId);
+      if (one) return [one];
+    }
+    return all;
+  }
+
+  function scenarioFor(ws, index) {
+    const list = poolFor(ws);
+    return list.length ? list[index % list.length] : null;
+  }
+
+  function clusterInfo(sc) {
+    if (!sc) return { clusterId: null, seq: null, seqTotal: null };
+    const list = D.scenariosOfCluster(sc.clusterId, true);
+    const pos = list.findIndex((x) => x.id === sc.id);
+    return { clusterId: sc.clusterId, seq: pos >= 0 ? pos + 1 : null, seqTotal: list.length || null };
+  }
+
+  function clusterLabel(call) {
+    const c = call && call.clusterId ? D.getCluster(call.clusterId) : null;
+    if (!c) return "";
+    return "Кластер «" + c.title + "»" + (call.seq ? " · сценарий " + call.seq + " из " + call.seqTotal : "");
+  }
+
+  function clusterProgress() {
+    const a = session.workstation ? D.getAssignments()[session.workstation] : null;
+    if (!a || !a.clusterId) return "";
+    const cluster = D.getCluster(a.clusterId);
+    const total = D.scenariosOfCluster(a.clusterId, true).length;
+    if (!cluster || !total) return "";
+    const dispatcher = session.role === "dispatcher";
+    const mine = incidents.filter((c) => c.workstation === session.workstation && c.clusterId === a.clusterId && (dispatcher ? c.source === "system" : c.source !== "system"));
+    const passed = dispatcher
+      ? mine.filter((c) => ["declined", "done", "refused"].indexOf(ddsState(c).phase) !== -1).length
+      : mine.filter((c) => c.status === "review" || c.status === "empty").length;
+    return "Кластер «" + esc(cluster.title) + "» · пройдено " + passed + " из " + total;
+  }
+
+  function newIncident(id, time, phone, scenarioId) {
+    const sc = scenarioId ? D.getScenarios().find((x) => x.id === scenarioId) : null;
+    const info = clusterInfo(sc);
+    return Object.assign(defaults(), {
+      id: id,
+      number: nextNumber(),
+      time: time,
+      phone: phone,
+      workstation: session.workstation || null,
+      scenarioId: scenarioId || null,
+      clusterId: info.clusterId,
+      seq: info.seq,
+      seqTotal: info.seqTotal,
+    });
+  }
+
+  function normalize(inc) {
+    const base = defaults();
+    const n = Object.assign(base, inc);
+    n.flags = Object.assign(base.flags, inc.flags);
+    n.address = Object.assign(emptyAddress(), inc.address);
+    n.dds = Object.assign(newDds(), inc.dds);
+    n.survey = inc.survey || {};
+    n.chat = inc.chat || [];
+    if (!n.number) n.number = nextNumber();
+    if (n.status === "approved") {
+      n.status = "review";
+      n.dds.decision = "accepted";
+      n.dds.reaction = "done";
+    } else if (n.status === "returned") {
+      n.status = "review";
+      n.dds.decision = "declined";
+      n.dds.comment = inc.dispatcherComment || null;
+    }
+    if (n.status === "review" && !n.sentAt) n.sentAt = Date.now();
+    return n;
+  }
+
   function seedIncidents() {
     return [
-      newIncident("c1", "10:47", "+7 (495) 123-45-67"),
-      newIncident("c2", "10:52", "+7 (903) 555-12-09"),
-      newIncident("c3", "10:58", "+7 (499) 887-21-34"),
-      newIncident("c4", "11:04", "Номер скрыт"),
-    ];
+      ["c1", "10:47", "+7 (495) 123-45-67"],
+      ["c2", "10:52", "+7 (903) 555-12-09"],
+      ["c3", "10:58", "+7 (499) 887-21-34"],
+      ["c4", "11:04", "Номер скрыт"],
+    ].map((row, i) => {
+      const sc = scenarioFor(null, i);
+      return newIncident(row[0], row[1], row[2], sc ? sc.id : null);
+    });
   }
 
   function loadIncidents() {
     try {
       const raw = localStorage.getItem("ddsIncidents");
-      if (raw) return JSON.parse(raw);
+      if (raw) return JSON.parse(raw).map(normalize);
     } catch (e) {
-      /* повреждённые данные в localStorage — начинаем заново */
+      localStorage.removeItem("ddsIncidents");
     }
     return seedIncidents();
   }
 
   function saveIncidents() {
     localStorage.setItem("ddsIncidents", JSON.stringify(incidents));
+    API.syncIncidents(incidents);
   }
 
   let incidents = loadIncidents();
@@ -109,43 +225,46 @@
   let users = [
     { name: "Иванов И.И.", role: "Оператор", blocked: false },
     { name: "Смирнова О.П.", role: "Диспетчер", blocked: false },
+    { name: "Кузнецова Е.А.", role: "Преподаватель", blocked: false },
     { name: "Сидоров П.П.", role: "Администратор", blocked: false },
     { name: "Козлов Д.А.", role: "Оператор", blocked: true },
   ];
 
   const TOOLBARS = {
     student: {
-      tabs: [
-        { id: "queue", label: "Очередь вызовов" },
-        { id: "stats", label: "Статистика" },
-      ],
+      tabs: [{ id: "queue", label: "Очередь вызовов", order: 10 }],
       primary: { label: "Создать карточку", action: "create-card" },
     },
-    teacher: {
+    dispatcher: {
       tabs: [
-        { id: "review", label: "На проверке" },
-        { id: "history", label: "История проверок" },
+        { id: "stream", label: "Поток карточек", order: 10 },
+        { id: "history", label: "История", order: 20 },
       ],
+      primary: { label: "Смоделировать поступление", action: "simulate-incoming" },
     },
+    teacher: { tabs: [] },
     admin: {
       tabs: [
-        { id: "progress", label: "Прогресс" },
-        { id: "users", label: "Пользователи" },
+        { id: "progress", label: "Прогресс", order: 10 },
+        { id: "users", label: "Пользователи", order: 20 },
       ],
     },
   };
 
-  const session = JSON.parse(localStorage.getItem("ddsSession") || "null");
-
-  if (!session) {
-    window.location.href = "index.html";
-    return;
+  function tabsFor(role) {
+    const extra = (window.DDS_TABS || []).filter((t) => t.roles.indexOf(role) !== -1);
+    return TOOLBARS[role].tabs.concat(extra).sort((a, b) => a.order - b.order);
   }
 
-  let activeTab = TOOLBARS[session.role].tabs[0].id;
+  let activeTab = tabsFor(session.role)[0].id;
 
   function renderTopbar() {
     document.getElementById("role-badge").textContent = ROLE_LABELS[session.role] || session.role;
+    const wsBadge = document.getElementById("ws-badge");
+    if (wsBadge && session.workstation && (session.role === "student" || session.role === "dispatcher")) {
+      wsBadge.textContent = session.workstation;
+      wsBadge.hidden = false;
+    }
     const status = document.getElementById("telephony-status");
     if (status) {
       status.hidden = session.role !== "student";
@@ -157,7 +276,7 @@
     const config = TOOLBARS[session.role];
     const toolbar = document.getElementById("toolbar");
 
-    const tabsHtml = config.tabs
+    const tabsHtml = tabsFor(session.role)
       .map(
         (tab) =>
           `<button type="button" class="toolbar-btn ${tab.id === activeTab ? "active" : ""}" data-tab="${tab.id}">${tab.label}</button>`
@@ -179,17 +298,60 @@
     });
 
     const createBtn = toolbar.querySelector('[data-action="create-card"]');
-    if (createBtn) {
-      createBtn.addEventListener("click", () => {
-        const now = new Date();
-        const id = "m" + now.getTime();
-        const time = now.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-        const call = newIncident(id, time, "—");
-        incidents = [call].concat(incidents);
-        saveIncidents();
-        openSheet(call);
-      });
+    if (createBtn) createBtn.addEventListener("click", createOperatorCard);
+
+    const simBtn = toolbar.querySelector('[data-action="simulate-incoming"]');
+    if (simBtn) simBtn.addEventListener("click", simulateIncoming);
+  }
+
+  function createOperatorCard() {
+    const now = new Date();
+    const mineCount = incidents.filter((c) => c.source !== "system" && c.workstation === session.workstation && String(c.id).charAt(0) === "m").length;
+    const sc = scenarioFor(session.workstation, mineCount);
+    const phone = sc ? sc.caller.phone : "—";
+    const call = newIncident("m" + now.getTime(), hhmm(), phone, sc ? sc.id : null);
+    incidents = [call].concat(incidents);
+    saveIncidents();
+    API.log("card_created", "Открыта карточка № " + call.number);
+    openSheet(call);
+  }
+
+  function servicesForTypes(types) {
+    const set = [];
+    types.forEach((id) => {
+      const t = INCIDENT_TYPES.find((x) => x.id === id);
+      if (t) t.services.forEach((s) => set.indexOf(s) === -1 && set.push(s));
+    });
+    return set;
+  }
+
+  function simulateIncoming() {
+    const pool = poolFor(session.workstation);
+    if (!pool.length) {
+      showToast("Нет утверждённых сценариев — утвердите сценарий у преподавателя");
+      return;
     }
+    const given = incidents.filter((c) => c.source === "system" && c.workstation === session.workstation).length;
+    const sc = pool[given % pool.length];
+    const now = new Date();
+    const inc = newIncident("s" + now.getTime(), hhmm(), sc.caller.phone, sc.id);
+    inc.source = "system";
+    inc.workstation = session.workstation || null;
+    inc.types = sc.types.slice();
+    inc.addressLine = sc.address;
+    inc.caller = sc.caller.name;
+    inc.callerStatus = sc.caller.status;
+    inc.description = sc.description;
+    inc.flags.injured = !!sc.injured;
+    inc.injuredCount = sc.injured ? "1" : null;
+    inc.services = servicesForTypes(inc.types);
+    inc.status = "review";
+    inc.sentAt = Date.now();
+    incidents = [inc].concat(incidents);
+    saveIncidents();
+    API.log("card_incoming", "Поступила карточка № " + inc.number);
+    showToast("Поступила карточка № " + inc.number + ": на приём " + D.TIMERS.accept + " с");
+    renderWorkspace();
   }
 
   function typeLabels(call) {
@@ -203,102 +365,187 @@
   function formatAddress(call) {
     if (call.emptyReason) return null;
     if (!call.addressLine) return null;
-    const a = call.address;
+    const a = call.address || {};
     const parts = [a.street, a.house ? `д. ${a.house}` : "", a.flat ? `кв. ${a.flat}` : ""].filter(Boolean);
-    return parts.length ? `${call.addressLine} (${parts.join(", ")})` : call.addressLine;
+    return esc(parts.length ? `${call.addressLine} (${parts.join(", ")})` : call.addressLine);
+  }
+
+  function fmtClock(sec) {
+    const s = Math.abs(sec);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  function acceptLeft(call) {
+    return D.TIMERS.accept - Math.floor((Date.now() - call.sentAt) / 1000);
+  }
+
+  function respondLeft(call) {
+    const from = call.dds.reactionAt || call.dds.decisionAt;
+    return D.TIMERS.respond - Math.floor((Date.now() - from) / 1000);
+  }
+
+  function reactionLabel(id) {
+    if (id === D.REACTION_REFUSED.id) return D.REACTION_REFUSED.label;
+    const hit = D.REACTION_STATUSES.find((s) => s.id === id);
+    return hit ? hit.label : "";
+  }
+
+  function ddsState(call) {
+    if (call.status !== "review") return { phase: "none", label: "", cls: "status-new" };
+    const d = call.dds;
+    if (d.decision === "pending") {
+      if (acceptLeft(call) < 0) return { phase: "pending", label: "Не оповещено", cls: "status-blocked", late: true };
+      return { phase: "pending", label: "Ожидает приёма", cls: "status-new" };
+    }
+    if (d.decision === "declined") return { phase: "declined", label: "Не принята", cls: "status-blocked" };
+    if (d.reaction === "done") return { phase: "done", label: reactionLabel("done"), cls: "status-done" };
+    if (d.reaction === "refused") return { phase: "refused", label: reactionLabel("refused"), cls: "status-blocked" };
+    if (respondLeft(call) < 0) return { phase: "active", label: "Не завершено", cls: "status-blocked", late: true };
+    return { phase: "active", label: d.reaction ? reactionLabel(d.reaction) : "Принята", cls: "status-done" };
   }
 
   function statusPill(call) {
-    switch (call.status) {
-      case "review":
-        return `<span class="status-pill status-new">Отправлена диспетчеру</span>`;
-      case "approved":
-        return `<span class="status-pill status-done">Утверждена</span>`;
-      case "returned":
-        return `<span class="status-pill status-blocked">Возвращена оператору</span>`;
-      case "empty":
-        return `<span class="cell-muted">${call.emptyReason === "no_contact" ? "Нет контакта" : "Срыв звонка"}</span>`;
-      default:
-        return `<span class="status-pill status-new">Новый вызов</span>`;
+    if (call.status === "empty") return `<span class="cell-muted">${call.emptyReason === "no_contact" ? "Нет контакта" : "Срыв звонка"}</span>`;
+    if (call.status === "review") {
+      const st = ddsState(call);
+      return `<span class="status-pill ${st.cls}">${st.label}</span>`;
     }
+    return `<span class="status-pill status-new">Новый вызов</span>`;
+  }
+
+  function timerCellHtml(call, kind) {
+    const st = ddsState(call);
+    if (kind === "accept") {
+      if (st.phase === "pending") {
+        const left = acceptLeft(call);
+        return left >= 0
+          ? `<span class="timer ${left <= 10 ? "warn" : ""}">${fmtClock(left)}</span>`
+          : `<span class="timer bad">−${fmtClock(left)}</span>`;
+      }
+      return `<span class="cell-muted">${st.phase === "declined" ? "не принята" : "принята"}</span>`;
+    }
+    if (st.phase === "active") {
+      const left = respondLeft(call);
+      return left >= 0
+        ? `<span class="timer ${left <= 30 ? "warn" : ""}">${fmtClock(left)}</span>`
+        : `<span class="timer bad">−${fmtClock(left)}</span>`;
+    }
+    return `<span class="cell-muted">—</span>`;
+  }
+
+  function tickTimers() {
+    document.querySelectorAll("[data-timer]").forEach((cell) => {
+      const call = incidents.find((c) => c.id === cell.dataset.id);
+      if (call) cell.innerHTML = timerCellHtml(call, cell.dataset.timer);
+    });
+    document.querySelectorAll("[data-ddsstatus]").forEach((cell) => {
+      const call = incidents.find((c) => c.id === cell.dataset.id);
+      if (call) cell.innerHTML = statusPill(call);
+    });
+    if (reviewOverlay && reviewOverlay.classList.contains("is-open") && currentReviewCall) updateReviewTimers();
+  }
+
+  function wireRowClicks(root) {
+    root.querySelectorAll("tr").forEach((tr) => {
+      const target = tr.querySelector("[data-row-open]");
+      if (!target) return;
+      tr.classList.add("row-click");
+      tr.tabIndex = 0;
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest("button, a, input, select, textarea, label")) return;
+        target.click();
+      });
+      tr.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && e.target === tr) target.click();
+      });
+    });
   }
 
   function renderWorkspace() {
-    const workspace = document.getElementById("workspace");
+    renderWorkspaceInner();
+    wireRowClicks(document.getElementById("workspace"));
+  }
 
-    if (session.role === "student" && activeTab === "queue") {
+  function renderWorkspaceInner() {
+    const workspace = document.getElementById("workspace");
+    const role = session.role;
+
+    if (role === "student" && activeTab === "queue") {
       workspace.innerHTML = renderOperatorQueue();
       wireOperatorQueue();
       return;
     }
-
-    if (session.role === "teacher" && activeTab === "review") {
-      workspace.innerHTML = renderDispatcherQueue();
-      wireDispatcherQueue();
+    if (role === "dispatcher" && activeTab === "stream") {
+      workspace.innerHTML = renderDispatcherStream();
+      openReviewOnClick("[data-review-id]", "reviewId", true);
       return;
     }
-
-    if (session.role === "teacher" && activeTab === "history") {
+    if (role === "dispatcher" && activeTab === "history") {
       workspace.innerHTML = renderDispatcherHistory();
-      wireReadOnlyOpen(".row-action[data-id]", false);
+      openReviewOnClick(".row-action[data-id]", "id", false);
       return;
     }
-
-    if (session.role === "admin" && activeTab === "progress") {
+    if (role === "admin" && activeTab === "progress") {
       workspace.innerHTML = renderAdminProgress();
-      wireReadOnlyOpen(".row-action[data-id]", false);
+      openReviewOnClick(".row-action[data-id]", "id", false);
       return;
     }
-
-    if (session.role === "admin" && activeTab === "users") {
+    if (role === "admin" && activeTab === "users") {
       workspace.innerHTML = renderUsersPanel();
       wireUsersPanel();
       return;
     }
 
-    const config = TOOLBARS[session.role];
-    const tab = config.tabs.find((t) => t.id === activeTab);
-    workspace.innerHTML = `
-      <div class="panel-head"><h2>${tab.label}</h2></div>
-      <div class="data-table-wrap"><div class="empty-hint">Раздел «${tab.label}» пока не реализован в этом прототипе.</div></div>
-    `;
+    const tab = tabsFor(role).find((t) => t.id === activeTab);
+    if (tab && tab.render) {
+      workspace.innerHTML = tab.render(window.DDS);
+      if (tab.wire) tab.wire(workspace, window.DDS);
+      return;
+    }
+    workspace.innerHTML = `<div class="panel-head"><h2>Раздел не найден</h2></div>`;
   }
 
-  // --- Оператор: очередь вызовов, заполнение карточки ---
+  function cardRow(call, i, extra) {
+    const labels = typeLabels(call);
+    const typeCell = labels ? (labels.length === 1 ? esc(labels[0]) : `${esc(labels[0])} <span class="cell-muted">+${labels.length - 1}</span>`) : `<span class="cell-muted">—</span>`;
+    const addressCell = formatAddress(call) || `<span class="cell-muted">—</span>`;
+    return `
+      <tr style="--i:${i}">
+        <td data-label="№" class="cell-mono">${esc(call.number)}</td>
+        <td data-label="Время" class="cell-mono">${esc(call.time)}</td>
+        ${extra.before || ""}
+        <td data-label="Тип происшествия">${typeCell}</td>
+        <td data-label="Адрес">${addressCell}</td>
+        ${extra.after || ""}
+      </tr>`;
+  }
+
   function renderOperatorQueue() {
-    const openCount = incidents.filter((c) => c.status === "new" || c.status === "returned").length;
+    const mine = incidents.filter((c) => c.source !== "system" && (!c.workstation || !session.workstation || c.workstation === session.workstation));
+    const openCount = mine.filter((c) => c.status === "new" || (c.status === "review" && c.dds.decision === "declined")).length;
 
-    const rows = incidents
+    const rows = mine
       .map((call, i) => {
-        const labels = typeLabels(call);
-        const typeCell = labels ? (labels.length === 1 ? labels[0] : `${labels[0]} <span class="cell-muted">+${labels.length - 1}</span>`) : `<span class="cell-muted">—</span>`;
-        const addressCell = formatAddress(call) || `<span class="cell-muted">—</span>`;
-        const canEdit = call.status === "new" || call.status === "returned";
+        const canEdit = call.status === "new" || (call.status === "review" && call.dds.decision === "declined");
         const actionBtn = canEdit
-          ? `<button type="button" class="row-action" data-id="${call.id}">Открыть</button>`
-          : `<button type="button" class="row-action" data-view-id="${call.id}">Просмотр</button>`;
-
-        return `
-          <tr style="--i:${i}">
-            <td data-label="Время" class="cell-mono">${call.time}</td>
-            <td data-label="АОН" class="cell-mono">${call.phone}</td>
-            <td data-label="Тип происшествия">${typeCell}</td>
-            <td data-label="Адрес">${addressCell}</td>
-            <td data-label="Статус">${statusPill(call)}</td>
-            <td data-label="">${actionBtn}</td>
-          </tr>`;
+          ? `<button type="button" class="row-action" data-row-open data-id="${call.id}">Открыть</button>`
+          : `<button type="button" class="row-action" data-row-open data-view-id="${call.id}">Просмотр</button>`;
+        return cardRow(call, i, {
+          before: `<td data-label="АОН" class="cell-mono">${esc(call.phone)}</td>`,
+          after: `<td data-label="Статус">${statusPill(call)}</td><td data-label="">${actionBtn}</td>`,
+        });
       })
       .join("");
 
     return `
       <div class="panel-head">
         <h2>Очередь вызовов</h2>
-        <span class="count">Требуют заполнения: ${openCount}</span>
+        <span class="count">${clusterProgress() ? clusterProgress() + " · " : ""}Требуют заполнения: ${openCount}</span>
       </div>
       <div class="data-table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Адрес</th><th>Статус</th><th></th></tr>
+            <tr><th>№</th><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Адрес</th><th>Статус</th><th></th></tr>
           </thead>
           <tbody>${rows}</tbody>
         </table>
@@ -312,87 +559,80 @@
         if (call) openSheet(call);
       });
     });
-    wireReadOnlyOpen(".row-action[data-view-id]", false, "view-id");
+    openReviewOnClick(".row-action[data-view-id]", "viewId", false);
   }
 
-  // --- Диспетчер: карточки на проверке и история решений ---
-  function renderDispatcherQueue() {
-    const pending = incidents.filter((c) => c.status === "review");
-    const rows = pending
-      .map((call, i) => {
-        const labels = typeLabels(call);
-        const typeCell = labels ? labels.join(", ") : `<span class="cell-muted">—</span>`;
-        return `
-          <tr style="--i:${i}">
-            <td data-label="Время" class="cell-mono">${call.time}</td>
-            <td data-label="АОН" class="cell-mono">${call.phone}</td>
-            <td data-label="Тип происшествия">${typeCell}</td>
-            <td data-label="Адрес">${formatAddress(call) || "—"}</td>
-            <td data-label=""><button type="button" class="row-action" data-review-id="${call.id}">Проверить</button></td>
-          </tr>`;
-      })
-      .join("");
-
-    return `
-      <div class="panel-head">
-        <h2>На проверке</h2>
-        <span class="count">Ожидают решения: ${pending.length}</span>
-      </div>
-      <div class="data-table-wrap">
-        ${pending.length ? `<table class="data-table"><thead><tr><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Адрес</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty-hint">Пока нет карточек, ожидающих проверки.</div>`}
-      </div>`;
-  }
-
-  function wireDispatcherQueue() {
-    document.querySelectorAll("[data-review-id]").forEach((btn) => {
+  function openReviewOnClick(selector, dataKey, allowActions) {
+    document.querySelectorAll(selector).forEach((btn) => {
       btn.addEventListener("click", () => {
-        const call = incidents.find((c) => c.id === btn.dataset.reviewId);
-        if (call) openReviewSheet(call, true);
+        const call = incidents.find((c) => c.id === btn.dataset[dataKey]);
+        if (call) openReviewSheet(call, allowActions && session.role === "dispatcher");
       });
     });
   }
 
-  function renderDispatcherHistory() {
-    const done = incidents.filter((c) => c.status === "approved" || c.status === "returned");
-    const rows = done
-      .map((call, i) => {
-        const labels = typeLabels(call);
-        return `
-          <tr style="--i:${i}">
-            <td data-label="Время" class="cell-mono">${call.time}</td>
-            <td data-label="АОН" class="cell-mono">${call.phone}</td>
-            <td data-label="Тип происшествия">${labels ? labels.join(", ") : "—"}</td>
-            <td data-label="Решение">${statusPill(call)}</td>
-            <td data-label=""><button type="button" class="row-action" data-id="${call.id}">Просмотр</button></td>
-          </tr>`;
-      })
+  function renderDispatcherStream() {
+    const pending = incidents.filter((c) => {
+      if (c.status !== "review") return false;
+      const ph = ddsState(c).phase;
+      return ph === "pending" || ph === "active";
+    });
+    const rows = pending
+      .map((call, i) =>
+        cardRow(call, i, {
+          before: `<td data-label="АОН" class="cell-mono">${esc(call.phone)}</td>`,
+          after: `
+            <td data-label="Приём (${D.TIMERS.accept} с)" class="cell-mono" data-timer="accept" data-id="${call.id}">${timerCellHtml(call, "accept")}</td>
+            <td data-label="Реагирование (${D.TIMERS.respond / 60} мин)" class="cell-mono" data-timer="respond" data-id="${call.id}">${timerCellHtml(call, "respond")}</td>
+            <td data-label="Статус" data-ddsstatus data-id="${call.id}">${statusPill(call)}</td>
+            <td data-label=""><button type="button" class="row-action" data-row-open data-review-id="${call.id}">${call.dds.decision === "pending" ? "Принять решение" : "Открыть"}</button></td>`,
+        })
+      )
       .join("");
 
     return `
       <div class="panel-head">
-        <h2>История проверок</h2>
-        <span class="count">Всего решений: ${done.length}</span>
+        <h2>Поток карточек</h2>
+        <span class="count">${clusterProgress() ? clusterProgress() + " · " : ""}В работе: ${pending.length}</span>
       </div>
+      <p class="empty-hint" style="padding:0 0 12px;">На решение «Принята / Не принята» даётся ${D.TIMERS.accept} с, иначе карточка получает статус «Не оповещено». После приёма — ${D.TIMERS.respond / 60} мин на следующий статус реагирования, иначе «Не завершено».</p>
       <div class="data-table-wrap">
-        ${done.length ? `<table class="data-table"><thead><tr><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Решение</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty-hint">Пока нет проверенных карточек.</div>`}
+        ${pending.length ? `<table class="data-table"><thead><tr><th>№</th><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Адрес</th><th>Приём</th><th>Реагирование</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty-hint">Поток пуст. Нажмите «Смоделировать поступление» или дождитесь карточек от операторов.</div>`}
       </div>`;
   }
 
-  // --- Администратор: наблюдение за прогрессом (без права правки) ---
+  function renderDispatcherHistory() {
+    const done = incidents.filter((c) => {
+      if (c.status !== "review") return false;
+      const ph = ddsState(c).phase;
+      return ph === "declined" || ph === "done" || ph === "refused";
+    });
+    const rows = done
+      .map((call, i) =>
+        cardRow(call, i, {
+          after: `<td data-label="Решение">${statusPill(call)}</td><td data-label=""><button type="button" class="row-action" data-row-open data-id="${call.id}">Просмотр</button></td>`,
+        })
+      )
+      .join("");
+
+    return `
+      <div class="panel-head">
+        <h2>История</h2>
+        <span class="count">Завершено: ${done.length}</span>
+      </div>
+      <div class="data-table-wrap">
+        ${done.length ? `<table class="data-table"><thead><tr><th>№</th><th>Время</th><th>Тип происшествия</th><th>Адрес</th><th>Решение</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty-hint">Пока нет завершённых карточек.</div>`}
+      </div>`;
+  }
+
   function renderAdminProgress() {
     const rows = incidents
-      .map((call, i) => {
-        const labels = typeLabels(call);
-        return `
-          <tr style="--i:${i}">
-            <td data-label="Время" class="cell-mono">${call.time}</td>
-            <td data-label="АОН" class="cell-mono">${call.phone}</td>
-            <td data-label="Тип происшествия">${labels ? labels.join(", ") : "<span class=\"cell-muted\">—</span>"}</td>
-            <td data-label="Адрес">${formatAddress(call) || "<span class=\"cell-muted\">—</span>"}</td>
-            <td data-label="Статус">${statusPill(call)}</td>
-            <td data-label="">${call.status !== "new" ? `<button type="button" class="row-action" data-id="${call.id}">Просмотр</button>` : ""}</td>
-          </tr>`;
-      })
+      .map((call, i) =>
+        cardRow(call, i, {
+          before: `<td data-label="Место" class="cell-mono">${esc(call.workstation || "—")}</td>`,
+          after: `<td data-label="Статус">${statusPill(call)}</td><td data-label="">${call.status !== "new" ? `<button type="button" class="row-action" data-row-open data-id="${call.id}">Просмотр</button>` : ""}</td>`,
+        })
+      )
       .join("");
 
     return `
@@ -403,26 +643,28 @@
       <p class="empty-hint" style="padding:0 0 14px;">Режим наблюдения: администратор видит весь конвейер обработки вызова, но не может редактировать карточки.</p>
       <div class="data-table-wrap">
         <table class="data-table">
-          <thead><tr><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Адрес</th><th>Статус</th><th></th></tr></thead>
+          <thead><tr><th>№</th><th>Время</th><th>Место</th><th>Тип происшествия</th><th>Адрес</th><th>Статус</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
   }
 
   function renderUsersPanel() {
-    const rows = users.map((u, i) => {
-      const statusCell = u.blocked
-        ? `<span class="status-pill status-blocked">Заблокирован</span>`
-        : `<span class="status-pill status-done">Активен</span>`;
-      const actionLabel = u.blocked ? "Разблокировать" : "Заблокировать";
-      return `
+    const rows = users
+      .map((u, i) => {
+        const statusCell = u.blocked
+          ? `<span class="status-pill status-blocked">Заблокирован</span>`
+          : `<span class="status-pill status-done">Активен</span>`;
+        const actionLabel = u.blocked ? "Разблокировать" : "Заблокировать";
+        return `
         <tr style="--i:${i}">
-          <td data-label="ФИО">${u.name}</td>
-          <td data-label="Роль" class="cell-muted">${u.role}</td>
+          <td data-label="ФИО">${esc(u.name)}</td>
+          <td data-label="Роль" class="cell-muted">${esc(u.role)}</td>
           <td data-label="Статус">${statusCell}</td>
-          <td data-label=""><button type="button" class="row-action ${u.blocked ? "" : "danger"}" data-name="${u.name}">${actionLabel}</button></td>
+          <td data-label=""><button type="button" class="row-action ${u.blocked ? "" : "danger"}" data-name="${esc(u.name)}">${actionLabel}</button></td>
         </tr>`;
-    }).join("");
+      })
+      .join("");
 
     return `
       <div class="panel-head">
@@ -438,35 +680,26 @@
   }
 
   function wireUsersPanel() {
-    document.querySelectorAll('.row-action[data-name]').forEach((btn) => {
+    document.querySelectorAll(".row-action[data-name]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const user = users.find((u) => u.name === btn.dataset.name);
         if (!user) return;
         user.blocked = !user.blocked;
+        API.log("user_block", `${user.name}: ${user.blocked ? "заблокирован" : "разблокирован"}`);
         showToast(user.blocked ? `${user.name}: доступ заблокирован` : `${user.name}: доступ восстановлен`);
         renderWorkspace();
       });
     });
   }
 
-  // Общий обработчик кнопок "Просмотр" — открывает карточку проверки без
-  // права принятия решения (используется историей диспетчера и админом).
-  function wireReadOnlyOpen(selector, allowActions, dataKey) {
-    const key = dataKey || "id";
-    document.querySelectorAll(selector).forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const call = incidents.find((c) => c.id === btn.dataset[key === "id" ? "id" : "viewId"]);
-        if (call) openReviewSheet(call, allowActions);
-      });
-    });
-  }
-
-  // =========================================================
-  // Карточка заполнения (Оператор)
-  // =========================================================
-
   const overlay = document.getElementById("incident-sheet");
   const titleEl = document.getElementById("sheet-title");
+  const numberEl = document.getElementById("sheet-number");
+  const clusterEl = document.getElementById("sheet-cluster");
+  const timerBox = document.getElementById("sheet-timer");
+  const timerNormEl = document.getElementById("sheet-timer-norm");
+  const stripWho = document.getElementById("caller-strip-who");
+  const stripText = document.getElementById("caller-strip-text");
   const phoneEl = document.getElementById("sheet-phone");
   const timeEl = document.getElementById("sheet-time");
   const phoneAonInput = document.getElementById("sheet-phone-aon");
@@ -475,6 +708,11 @@
   const typesField = document.getElementById("field-types");
   const typeSearchInput = document.getElementById("type-search");
   const typeTilesEl = document.getElementById("type-tiles");
+  const surveyField = document.getElementById("field-survey");
+  const surveyEl = document.getElementById("survey");
+  const chatLog = document.getElementById("chat-log");
+  const chatInput = document.getElementById("chat-input");
+  const chatSend = document.getElementById("chat-send");
   const addressField = document.getElementById("field-address");
   const addressInput = document.getElementById("sheet-address-input");
   const addrInputs = {
@@ -506,7 +744,6 @@
   const serviceAddWrap = document.getElementById("service-add");
   const serviceAddSelect = document.getElementById("service-add-select");
   const serviceAddBtn = document.getElementById("service-add-btn");
-  const timerEl = document.getElementById("sheet-timer");
   const timerValueEl = document.getElementById("sheet-timer-value");
   const telephonyStatusBtn = document.getElementById("telephony-status");
   const telephonyStatusLabel = document.getElementById("telephony-status-label");
@@ -515,11 +752,16 @@
   let secondsElapsed = 0;
   let currentCall = null;
   let selectedTypes = [];
+  let currentSurvey = {};
   let manualServices = [];
   let removedAutoServices = [];
   let currentFlags = { injured: false, notOnSite: false, ambulanceRefused: false, blocked: false };
   let telephonyResetTimer = null;
-  let manualPause = false; // оператор сам поставил «недоступен» кнопкой в шапке
+  let manualPause = false;
+
+  function scenarioOf(call) {
+    return D.getScenarios().find((s) => s.id === call.scenarioId) || null;
+  }
 
   function initSheet() {
     typeTilesEl.innerHTML = INCIDENT_TYPES.map(
@@ -580,12 +822,19 @@
       renderServiceChips();
     });
 
+    chatSend.addEventListener("click", sendChat);
+    chatInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sendChat();
+      }
+    });
+
     document.getElementById("btn-no-contact").addEventListener("click", () => finishAsEmpty("no_contact"));
     document.getElementById("btn-call-failed").addEventListener("click", () => finishAsEmpty("call_failed"));
 
     if (telephonyStatusBtn) {
       telephonyStatusBtn.addEventListener("click", () => {
-        // пока открыта карточка, статус ставится автоматически («недоступен» — занят вызовом)
         if (overlay.classList.contains("is-open")) return;
         manualPause = !manualPause;
         clearTimeout(telephonyResetTimer);
@@ -597,11 +846,38 @@
     document.getElementById("sheet-submit").addEventListener("click", submitCard);
   }
 
+  function renderChat() {
+    chatLog.innerHTML = (currentCall.chat || [])
+      .slice(-4)
+      .map((m) => `<div class="chat-msg ${m.role}"><b>${m.role === "operator" ? "Вы" : "Заявитель (ИИ)"}</b>${esc(m.text)}</div>`)
+      .join("") || `<div class="chat-empty">Сообщений пока нет</div>`;
+    chatLog.scrollTop = chatLog.scrollHeight;
+    const lastCaller = (currentCall.chat || []).slice().reverse().find((m) => m.role === "caller");
+    stripWho.textContent = currentCall.phone && currentCall.phone !== "—" ? currentCall.phone : "номер не определён";
+    stripText.textContent = lastCaller ? "«" + lastCaller.text + "»" : "Сообщений пока нет";
+  }
+
+  function sendChat() {
+    const text = chatInput.value.trim();
+    if (!text || !currentCall) return;
+    const call = currentCall;
+    chatInput.value = "";
+    call.chat.push({ role: "operator", text: text });
+    renderChat();
+    saveIncidents();
+    setTimeout(() => {
+      call.chat.push({ role: "caller", text: D.callerReply(scenarioOf(call), text) });
+      if (currentCall === call) renderChat();
+      saveIncidents();
+    }, 500);
+  }
+
   function finishAsEmpty(reason) {
     const label = reason === "no_contact" ? "Нет контакта" : "Срыв звонка";
     if (!confirm(`Сохранить карточку со статусом «${label}» без заполнения остальных полей?`)) return;
     currentCall.status = "empty";
     currentCall.emptyReason = reason;
+    API.log("card_empty", `Карточка № ${currentCall.number}: ${label}`);
     showToast(`Карточка сохранена · ${label}`);
     saveIncidents();
     closeSheet();
@@ -617,14 +893,51 @@
   }
 
   function currentAutoServices() {
-    const set = [];
+    return servicesForTypes(selectedTypes);
+  }
+
+  function surveySets() {
+    const keys = [];
     selectedTypes.forEach((id) => {
-      const type = INCIDENT_TYPES.find((t) => t.id === id);
-      type.services.forEach((s) => {
-        if (set.indexOf(s) === -1) set.push(s);
+      const k = D.TYPE_SURVEY[id];
+      if (k && keys.indexOf(k) === -1) keys.push(k);
+    });
+    return keys;
+  }
+
+  function renderSurvey() {
+    const sets = surveySets();
+    surveyField.hidden = !sets.length;
+    surveyEl.innerHTML = sets
+      .map((setKey) =>
+        D.SURVEYS[setKey]
+          .map((g) => {
+            const key = setKey + "." + g.key;
+            const opts = g.options
+              .map((o) => `<button type="button" class="flag-pill ${currentSurvey[key] === o ? "active" : ""}" data-survey="${key}" data-value="${o}">${o}</button>`)
+              .join("");
+            return `<div class="survey-group"><span class="survey-label">${g.label}</span><div class="flag-row">${opts}</div></div>`;
+          })
+          .join("")
+      )
+      .join("");
+    surveyEl.querySelectorAll("[data-survey]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.survey;
+        if (currentSurvey[key] === btn.dataset.value) delete currentSurvey[key];
+        else currentSurvey[key] = btn.dataset.value;
+        renderSurvey();
       });
     });
-    return set;
+  }
+
+  function prunedSurvey() {
+    const valid = {};
+    surveySets().forEach((setKey) => D.SURVEYS[setKey].forEach((g) => {
+      const key = setKey + "." + g.key;
+      if (currentSurvey[key]) valid[key] = currentSurvey[key];
+    }));
+    return valid;
   }
 
   function applyTypes() {
@@ -641,6 +954,7 @@
     }
 
     servicesHint.hidden = selectedTypes.length > 0;
+    renderSurvey();
     renderServiceChips();
   }
 
@@ -729,12 +1043,17 @@
     currentCall.description = descriptionInput.value.trim();
     currentCall.flags = Object.assign({}, currentFlags);
     currentCall.injuredCount = currentFlags.injured ? injuredCountInput.value : null;
+    currentCall.survey = prunedSurvey();
     currentCall.services = finalServices;
     currentCall.fillSeconds = secondsElapsed;
+    currentCall.workstation = session.workstation || currentCall.workstation;
     currentCall.status = "review";
+    currentCall.sentAt = Date.now();
+    currentCall.dds = newDds();
     currentCall.dispatcherComment = null;
 
-    showToast(`Карточка отправлена диспетчеру · заполнена за ${secondsElapsed} с`);
+    API.log("card_sent", `Карточка № ${currentCall.number} отправлена диспетчеру за ${secondsElapsed} с`);
+    showToast(`Карточка № ${currentCall.number} отправлена диспетчеру · заполнена за ${secondsElapsed} с`);
     saveIncidents();
     closeSheet();
     renderWorkspace();
@@ -754,6 +1073,8 @@
     const m = Math.floor(secondsElapsed / 60);
     const s = secondsElapsed % 60;
     timerValueEl.textContent = `${m}:${String(s).padStart(2, "0")}`;
+    timerNormEl.textContent = "норматив " + fmtClock(D.NORMS.fillSeconds);
+    timerBox.classList.toggle("is-over", secondsElapsed > D.NORMS.fillSeconds);
   }
 
   function stopTimer() {
@@ -767,6 +1088,7 @@
     setTelephonyStatus("unavailable");
 
     selectedTypes = call.types ? call.types.slice() : [];
+    currentSurvey = Object.assign({}, call.survey);
     addressInput.value = call.addressLine || "";
     Object.keys(addrInputs).forEach((key) => {
       addrInputs[key].value = (call.address && call.address[key]) || (key === "country" ? "Россия" : key === "region" || key === "locality" ? "Москва" : "");
@@ -793,17 +1115,28 @@
 
     applyTypes();
 
+    numberEl.textContent = call.number;
+    clusterEl.textContent = clusterLabel(call);
     phoneAonInput.value = call.phone;
     phoneEl.textContent = call.phone;
     timeEl.textContent = call.time;
 
-    if (call.status === "returned" && call.dispatcherComment) {
-      showToast(`Возвращена диспетчером: ${call.dispatcherComment}`);
+    const sc = scenarioOf(call);
+    if (!call.chat.length && sc) {
+      call.chat.push({ role: "caller", text: sc.opening });
+      saveIncidents();
+    }
+    chatInput.value = "";
+    renderChat();
+
+    if (call.status === "review" && call.dds.decision === "declined" && call.dds.comment) {
+      showToast(`Не принята диспетчером: ${call.dds.comment}`);
     }
 
     startTimer();
 
     overlay.hidden = false;
+    fitOperator();
     requestAnimationFrame(() => overlay.classList.add("is-open"));
     overlay.setAttribute("aria-hidden", "false");
     typeSearchInput.focus();
@@ -824,12 +1157,10 @@
     }, 320);
   }
 
-  // =========================================================
-  // Карточка проверки (Диспетчер / наблюдение Администратора)
-  // =========================================================
-
   const reviewOverlay = document.getElementById("review-sheet");
+  const reviewComment = document.getElementById("review-comment");
   let currentReviewCall = null;
+  let currentReviewAllow = false;
 
   function initReviewSheet() {
     document.getElementById("review-close").addEventListener("click", closeReviewSheet);
@@ -837,65 +1168,157 @@
       if (e.target === reviewOverlay) closeReviewSheet();
     });
     document.getElementById("review-callback-btn").addEventListener("click", () => {
-      // звонок ведёт js/telephony.js (панель «Телефон»); без неё — только уведомление
+      API.log("callback", `Перезвон заявителю по карточке № ${currentReviewCall.number}`);
       if (window.DDS_TELEPHONY) emit("dds:callback", currentReviewCall);
       else showToast(`Звонок заявителю: ${currentReviewCall.phone}`);
     });
-    document.getElementById("review-approve").addEventListener("click", () => {
-      currentReviewCall.status = "approved";
-      currentReviewCall.dispatcherComment = document.getElementById("review-comment").value.trim() || null;
-      showToast("Карточка утверждена");
-      saveIncidents();
-      closeReviewSheet();
-      renderWorkspace();
-    });
-    document.getElementById("review-return").addEventListener("click", () => {
-      const comment = document.getElementById("review-comment").value.trim();
-      if (!comment) {
-        document.getElementById("review-comment").focus();
-        showToast("Укажите, что нужно исправить");
-        return;
-      }
-      currentReviewCall.status = "returned";
-      currentReviewCall.dispatcherComment = comment;
-      showToast("Карточка возвращена оператору");
-      saveIncidents();
-      closeReviewSheet();
-      renderWorkspace();
+    document.getElementById("review-accept").addEventListener("click", () => decide("accepted"));
+    document.getElementById("review-decline").addEventListener("click", () => decide("declined"));
+    document.getElementById("review-statuses").addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-reaction]");
+      if (btn && !btn.disabled) setReaction(btn.dataset.reaction);
     });
   }
 
-  function openReviewSheet(call, allowActions) {
-    currentReviewCall = call;
-    document.getElementById("review-title").textContent = "Карточка происшествия";
+  function pushHistory(call, id, label, comment) {
+    call.dds.history.push({ id: id, label: label, time: hhmm(), comment: comment || null });
+  }
+
+  function decide(kind) {
+    const call = currentReviewCall;
+    if (!call || call.dds.decision !== "pending") return;
+    const comment = reviewComment.value.trim();
+    if (kind === "declined" && !comment) {
+      reviewComment.focus();
+      showToast("Комментарий обязателен: укажите причину и кому передана информация");
+      return;
+    }
+    call.dds.decision = kind;
+    call.dds.decisionAt = Date.now();
+    call.dds.comment = comment || null;
+    pushHistory(call, kind, kind === "accepted" ? "Принята" : "Не принята", comment);
+    API.log("dds_" + kind, `Карточка № ${call.number}: ${kind === "accepted" ? "принята" : "не принята"}`);
+    saveIncidents();
+    if (kind === "declined") {
+      showToast("Карточка не принята, причина передана оператору");
+      closeReviewSheet();
+    } else {
+      showToast("Карточка принята");
+      fillReview(call, true);
+    }
+    renderWorkspace();
+  }
+
+  function setReaction(id) {
+    const call = currentReviewCall;
+    if (!call || call.dds.decision !== "accepted") return;
+    const order = D.REACTION_STATUSES.map((s) => s.id);
+    const cur = call.dds.reaction ? order.indexOf(call.dds.reaction) : -1;
+    const comment = reviewComment.value.trim();
+    if (id === D.REACTION_REFUSED.id) {
+      if (!comment) {
+        reviewComment.focus();
+        showToast("Для отказа от выполнения работ комментарий обязателен");
+        return;
+      }
+    } else if (order.indexOf(id) !== cur + 1) {
+      return;
+    }
+    call.dds.reaction = id;
+    call.dds.reactionAt = Date.now();
+    pushHistory(call, id, reactionLabel(id), comment);
+    reviewComment.value = "";
+    API.log("dds_reaction", `Карточка № ${call.number}: ${reactionLabel(id)}`);
+    saveIncidents();
+    fillReview(call, true);
+    renderWorkspace();
+  }
+
+  function surveyChips(call) {
+    const items = Object.keys(call.survey || {}).map((key) => {
+      const parts = key.split(".");
+      const group = (D.SURVEYS[parts[0]] || []).find((g) => g.key === parts[1]);
+      return `<span class="review-flag">${esc(group ? group.label : key)}: ${esc(call.survey[key])}</span>`;
+    });
+    return items.length ? items.join("") : `<span class="cell-muted">Не заполнена</span>`;
+  }
+
+  function reactionButtons(call, allow) {
+    const order = D.REACTION_STATUSES.map((s) => s.id);
+    const cur = call.dds.reaction ? order.indexOf(call.dds.reaction) : -1;
+    const refused = call.dds.reaction === D.REACTION_REFUSED.id;
+    const finished = refused || call.dds.reaction === "done";
+    const steps = D.REACTION_STATUSES.map((s, i) => {
+      const passed = !refused && i <= cur;
+      const next = !finished && i === cur + 1;
+      return `<button type="button" class="step-btn ${passed ? "passed" : next ? "next" : ""}" data-reaction="${s.id}" ${!allow || !next ? "disabled" : ""}>${s.label}</button>`;
+    }).join("");
+    const refuse = `<button type="button" class="step-btn refuse ${refused ? "passed" : ""}" data-reaction="${D.REACTION_REFUSED.id}" ${!allow || finished ? "disabled" : ""}>${D.REACTION_REFUSED.label}</button>`;
+    return steps + refuse;
+  }
+
+  function fillReview(call, allow) {
+    currentReviewAllow = allow;
+    document.getElementById("review-title").textContent = "Карточка № " + call.number;
+    document.getElementById("review-cluster").textContent = clusterLabel(call);
     document.getElementById("review-phone").textContent = call.phone;
-    document.getElementById("review-callback-btn").hidden = call.emptyReason ? true : false;
+    document.getElementById("review-callback-btn").hidden = !!call.emptyReason;
 
     const labels = typeLabels(call);
     document.getElementById("review-types").textContent = labels ? labels.join(", ") : "—";
-    document.getElementById("review-address").textContent = formatAddress(call) || "—";
+    document.getElementById("review-address").innerHTML = formatAddress(call) || "—";
     document.getElementById("review-caller").textContent = call.caller || "—";
     document.getElementById("review-caller-status").textContent = call.callerStatus || "—";
     document.getElementById("review-description").textContent = call.description || "—";
+    document.getElementById("review-survey").innerHTML = surveyChips(call);
 
     const flagLabels = { injured: "Пострадавшие", notOnSite: "Нет на месте", ambulanceRefused: "Отказ от скорой", blocked: "Заблокированные" };
     const activeFlags = Object.keys(flagLabels).filter((k) => call.flags && call.flags[k]);
     if (call.foreignLanguage) activeFlags.push("__foreign__");
     document.getElementById("review-flags").innerHTML = activeFlags.length
-      ? activeFlags.map((k) => `<span class="review-flag">${k === "__foreign__" ? "Иностранный язык" : flagLabels[k]}${k === "injured" && call.injuredCount ? ": " + call.injuredCount : ""}</span>`).join("")
+      ? activeFlags.map((k) => `<span class="review-flag">${k === "__foreign__" ? "Иностранный язык" : flagLabels[k]}${k === "injured" && call.injuredCount ? ": " + esc(call.injuredCount) : ""}</span>`).join("")
       : `<span class="cell-muted">Отметок нет</span>`;
 
     document.getElementById("review-services").innerHTML = (call.services || [])
-      .map((s) => `<span class="service-chip">${iconHtml("call", 12)}${s}</span>`)
+      .map((s) => `<span class="service-chip">${iconHtml("call", 12)}${esc(s)}</span>`)
       .join("") || `<span class="cell-muted">Службы не назначены</span>`;
 
-    const commentInput = document.getElementById("review-comment");
-    commentInput.value = call.dispatcherComment || "";
+    document.getElementById("review-chat").innerHTML = (call.chat || [])
+      .map((m) => `<div class="chat-msg ${m.role}"><b>${m.role === "operator" ? "Оператор" : "Заявитель (ИИ)"}</b>${esc(m.text)}</div>`)
+      .join("") || `<span class="cell-muted">Переписки нет</span>`;
 
-    const actions = document.getElementById("review-actions");
-    actions.hidden = !allowActions;
+    const st = ddsState(call);
+    const isReview = call.status === "review";
+    const pending = isReview && call.dds.decision === "pending";
+    const accepted = isReview && call.dds.decision === "accepted";
+    const canComment = allow && (pending || (accepted && st.phase === "active"));
 
+    document.getElementById("review-timers").hidden = !isReview;
+    document.getElementById("review-decision").hidden = !(allow && pending);
+    document.getElementById("review-reaction-block").hidden = !accepted;
+    document.getElementById("review-statuses").innerHTML = accepted ? reactionButtons(call, allow) : "";
+    document.getElementById("review-comment-field").hidden = !(canComment || (isReview && call.dds.comment));
+    reviewComment.disabled = !canComment;
+    reviewComment.value = canComment ? "" : call.dds.comment || "";
+
+    document.getElementById("review-history").innerHTML = call.dds.history.length
+      ? call.dds.history.map((h) => `<div class="history-row"><span class="cell-mono">${esc(h.time)}</span><b>${esc(h.label)}</b>${h.comment ? `<span class="cell-muted">${esc(h.comment)}</span>` : ""}</div>`).join("")
+      : "";
+    updateReviewTimers();
+  }
+
+  function updateReviewTimers() {
+    if (!currentReviewCall || currentReviewCall.status !== "review") return;
+    document.getElementById("review-timer-accept").innerHTML = timerCellHtml(currentReviewCall, "accept");
+    document.getElementById("review-timer-respond").innerHTML = timerCellHtml(currentReviewCall, "respond");
+    document.getElementById("review-state").innerHTML = statusPill(currentReviewCall);
+  }
+
+  function openReviewSheet(call, allowActions) {
+    currentReviewCall = call;
+    fillReview(call, !!allowActions);
     reviewOverlay.hidden = false;
+    fitReview();
     requestAnimationFrame(() => reviewOverlay.classList.add("is-open"));
     reviewOverlay.setAttribute("aria-hidden", "false");
     emit("dds:review-open", call);
@@ -910,14 +1333,59 @@
     }, 320);
   }
 
-  // --- связь с телефонией (js/telephony.js): события АРМ и сохранение отработок ---
+  const FIT_MAX = 11;
+  const FIT_MIN = 7.5;
+
+  function fitWindow(sheet) {
+    if (!sheet || sheet.offsetParent === null) return;
+    const body = sheet.querySelector(".win-body");
+    const cols = sheet.querySelectorAll(".win-col");
+    const tooTall = () => {
+      for (let i = 0; i < cols.length; i++) if (cols[i].scrollHeight - cols[i].clientHeight > 1) return true;
+      return body.scrollHeight - body.clientHeight > 1;
+    };
+    let fs = FIT_MAX;
+    sheet.classList.remove("fit-fail");
+    sheet.style.setProperty("--fs", fs + "px");
+    while (tooTall() && fs > FIT_MIN) {
+      fs = Math.round((fs - 0.25) * 100) / 100;
+      sheet.style.setProperty("--fs", fs + "px");
+    }
+    if (tooTall()) sheet.classList.add("fit-fail");
+  }
+
+  function watchFit(overlayEl) {
+    const sheet = overlayEl.querySelector(".sheet-wide");
+    const body = sheet.querySelector(".win-body");
+    let raf = 0;
+    const run = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => fitWindow(sheet));
+    };
+    new MutationObserver(run).observe(body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class", "hidden"] });
+    new MutationObserver(run).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    window.addEventListener("resize", run);
+    return () => fitWindow(sheet);
+  }
+
+  let fitOperator = () => {};
+  let fitReview = () => {};
+
   function emit(name, detail) {
     document.dispatchEvent(new CustomEvent(name, { detail: detail }));
   }
 
+  function showToast(text) {
+    const toast = document.getElementById("toast");
+    document.getElementById("toast-text").textContent = text;
+    toast.classList.add("is-visible");
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => toast.classList.remove("is-visible"), 2600);
+  }
+
   window.DDS = {
     role: session.role,
-    // отработка — звонок по карточке: служба, номер, кто принял, суть, время, запись
+    session: session,
     addCallLog(incidentId, entry) {
       const call = incidents.find((c) => c.id === incidentId);
       if (!call) return false;
@@ -928,17 +1396,23 @@
     getIncident(incidentId) {
       return incidents.find((c) => c.id === incidentId) || null;
     },
+    getIncidents: () => incidents,
+    saveIncidents: saveIncidents,
+    getUsers: () => users,
+    showToast: showToast,
+    renderWorkspace: renderWorkspace,
+    openReview: openReviewSheet,
+    typeLabels: typeLabels,
+    formatAddress: formatAddress,
+    statusPill: statusPill,
+    clusterLabel: clusterLabel,
+    poolFor: poolFor,
+    ddsState: ddsState,
+    esc: esc,
+    INCIDENT_TYPES: INCIDENT_TYPES,
+    ALL_SERVICES: ALL_SERVICES,
+    ROLE_LABELS: ROLE_LABELS,
   };
-
-  // --- тост-уведомление ---
-  let toastTimer = null;
-  function showToast(text) {
-    const toast = document.getElementById("toast");
-    document.getElementById("toast-text").textContent = text;
-    toast.classList.add("is-visible");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.classList.remove("is-visible"), 2400);
-  }
 
   function startClock() {
     const clockEl = document.getElementById("clock");
@@ -964,8 +1438,27 @@
   startClock();
   initSheet();
   initReviewSheet();
+  fitOperator = watchFit(overlay);
+  fitReview = watchFit(reviewOverlay);
+  setInterval(tickTimers, 1000);
+
+  if (!session.sid) {
+    session.sid = "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    localStorage.setItem("ddsSession", JSON.stringify(session));
+  }
+  API.touchSession(session);
+  setInterval(() => API.touchSession(session), 15000);
+
+  API.pullIncidents().then((list) => {
+    if (!list) return;
+    incidents = list.map(normalize);
+    localStorage.setItem("ddsIncidents", JSON.stringify(incidents));
+    renderWorkspace();
+  });
 
   document.getElementById("logout-btn").addEventListener("click", () => {
+    API.log("logout", "Выход из системы");
+    API.dropSession(session.sid);
     localStorage.removeItem("ddsSession");
     window.location.href = "index.html";
   });
