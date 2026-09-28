@@ -1,0 +1,129 @@
+# Полный учебный комплекс: все четыре части команды одной командой (п.4.4 ТЗ).
+#
+#     docker compose -f docker-compose.stack.yml up --build
+#
+# Этот файл — «точка сборки» проекта. Каждый участник подставляет путь к своей
+# папке в переменных FRONTEND_PATH / ML_PATH / SIP_PATH; пока чьей-то части нет,
+# её сервис просто не поднимают — остальное работает:
+#
+#     docker compose -f docker-compose.stack.yml up postgres api        # только backend
+#     docker compose -f docker-compose.stack.yml --profile ml up        # + ML-сервис
+#     docker compose -f docker-compose.stack.yml --profile full up      # весь комплекс
+#
+# Пока ML и SIP не подняты, backend работает на заглушках (ML_USE_STUB=true),
+# поэтому сквозной сценарий занятия показывается даже в неполном составе.
+name: dds112-trainer-stack
+
+services:
+  # ------------------------------------------------------------------ данные
+  postgres:
+    image: postgres:16-alpine
+    container_name: dds112-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dds112}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dds112}
+      POSTGRES_DB: ${POSTGRES_DB:-dds112}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Резервные копии видны и снаружи контейнера — их забирает администратор.
+      - ./var/backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dds112} -d ${POSTGRES_DB:-dds112}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [dds112]
+
+  # ------------------------------------------------- участник 2: backend (мы)
+  api:
+    build: .
+    container_name: dds112-api
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      #: Внутри сети база всегда на 5432, независимо от POSTGRES_PORT в .env.
+      POSTGRES_PORT: "5432"
+      # Внутри сети контейнеры видят друг друга по имени сервиса.
+      ML_SERVICE_URL: ${ML_SERVICE_URL:-http://ml:8100}
+      TELEPHONY_SERVICE_URL: ${TELEPHONY_SERVICE_URL:-http://sip:8200}
+      # Пока сервисы товарищей не подняты — работаем на заглушках.
+      ML_USE_STUB: ${ML_USE_STUB:-true}
+      TELEPHONY_USE_STUB: ${TELEPHONY_USE_STUB:-true}
+      CORS_ORIGINS: '["http://localhost:${FRONTEND_PORT:-5173}","http://frontend:80"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./var:/srv/app/var
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m scripts.seed &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    restart: unless-stopped
+    networks: [dds112]
+
+  # -------------------------------------------- участник 1: веб-интерфейс
+  frontend:
+    profiles: [frontend, full]
+    build:
+      context: ${FRONTEND_PATH:-../dds112-trainer-frontend}
+    container_name: dds112-frontend
+    environment:
+      # Frontend обращается к backend по этому адресу (снаружи, из браузера).
+      VITE_API_URL: http://localhost:${API_PORT:-8000}/api/v1
+      VITE_WS_URL: ws://localhost:${API_PORT:-8000}/api/v1/ws
+    depends_on: [api]
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    restart: unless-stopped
+    networks: [dds112]
+
+  # ------------------------------------------------ участник 3: Python / ML
+  ml:
+    profiles: [ml, full]
+    build:
+      context: ${ML_PATH:-../dds112-trainer-ml}
+    container_name: dds112-ml
+    environment:
+      # ML читает классификатор и материалы через API backend.
+      BACKEND_URL: http://api:8000/api/v1
+      PORT: "8100"
+    depends_on: [api]
+    ports:
+      - "${ML_PORT:-8100}:8100"
+    restart: unless-stopped
+    networks: [dds112]
+
+  # --------------------------------------- участник 4: телефония (SIP/VoIP)
+  sip:
+    profiles: [telephony, full]
+    build:
+      context: ${SIP_PATH:-../dds112-trainer-telephony}
+    container_name: dds112-sip
+    environment:
+      # Телефония шлёт события вызова на вебхук backend с общим секретом.
+      BACKEND_WEBHOOK_URL: http://api:8000/api/v1/telephony/events
+      TELEPHONY_WEBHOOK_TOKEN: ${TELEPHONY_WEBHOOK_TOKEN:-dev-telephony-token}
+      PORT: "8200"
+    depends_on: [api]
+    ports:
+      - "${SIP_PORT:-8200}:8200"
+      - "${SIP_UDP_PORT:-5060}:5060/udp"
+    volumes:
+      # Аудиозаписи учебных вызовов должны быть видны backend: он привязывает
+      # файл к карточке и отдаёт преподавателю.
+      - ./var/audio:/audio
+    restart: unless-stopped
+    networks: [dds112]
+
+volumes:
+  pgdata:
+
+networks:
+  dds112:
+    driver: bridge
+    # В учебном контуре включить полную изоляцию от внешних сетей (п.4.6 ТЗ):
+    # internal: true

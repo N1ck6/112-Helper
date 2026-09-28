@@ -1,0 +1,20 @@
+[project]
+name = "dds112-trainer-backend"
+version = "0.1.0"
+description = "Backend учебного ПО для подготовки операторов ДДС города Москвы (эмулятор АРМ-112)"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "C4"]
+ignore = ["B008"]  # Depends() в значениях по умолчанию — идиома FastAPI
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
