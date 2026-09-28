@@ -147,6 +147,7 @@ data/generated/
 
 *.mp3
 *.wav
+*.sln
 *.ogg
 *.flac
 *.m4a

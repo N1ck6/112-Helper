@@ -132,16 +132,17 @@ class DialogueRunner:
         self.events.emit("call.started", **ctx.ids(), direction=call.direction, channel=channel,
                          caller_id=env.get("agi_callerid"), persona=persona_brief(ctx.persona),
                          card_id=(ctx.card or {}).get("id"))
-        if ctx.call_type == DISPATCH and ctx.persona is None:
-            return self._unknown_number(agi, ctx)
-        ctx.channel = channel
-        ctx.ear = self._open_ear(ctx)
         try:
+            if ctx.call_type == DISPATCH and ctx.persona is None:
+                return self._unknown_number(agi, ctx)
+            ctx.channel = channel
+            ctx.ear = self._open_ear(ctx)
             return self.run(agi, ctx)
         finally:
             if ctx.ear:
                 ctx.ear.stop()
-                ctx.ear.path.unlink(missing_ok=True)  # поток нужен только на время звонка
+            if self.s.recordings_local_dir.is_dir():  # поток нужен только на время звонка
+                (self.s.recordings_local_dir / f"{ctx.file_stem()}_rx.sln").unlink(missing_ok=True)
 
     def _open_ear(self, ctx: CallContext) -> Ear | None:
         """Поток голоса оператора, который пишет MixMonitor r() ([training-run] в dialplan)."""
