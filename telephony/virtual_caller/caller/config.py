@@ -26,6 +26,10 @@ class Settings:
     voice_service_url: str
     ml_api_url: str
     backend_url: str
+    # Формат событий для BACKEND_URL: raw — как в SSE (заглушка mocks), backend — контракт
+    # backend/docs/INTEGRATION.md §2.2 (ringing/answered/ended…) с заголовком X-Telephony-Token
+    backend_events_format: str
+    backend_token: str
     http_timeout_sec: float
     # AMI — для исходящих вызовов, отбоя и статуса аккаунтов
     ami_host: str
@@ -46,6 +50,9 @@ class Settings:
     directory_path: Path
     cors_origins: str
     ringback_sec: int
+    # Звонки, которые поднимает Backend (POST /api/v1/calls/originate)
+    default_trainee: str
+    default_112_scenario: str
     # Данные
     sessions_log_path: Path
     recordings_dir: str
@@ -61,6 +68,8 @@ class Settings:
             voice_service_url=_url("VOICE_SERVICE_URL", "http://voice-service:8091"),
             ml_api_url=_url("ML_API_URL", "http://mocks:8093/ml"),
             backend_url=os.environ.get("BACKEND_URL", "").strip().rstrip("/"),
+            backend_events_format=_env("BACKEND_EVENTS_FORMAT", "raw").lower(),
+            backend_token=_env("TELEPHONY_WEBHOOK_TOKEN", ""),
             http_timeout_sec=float(_env("HTTP_TIMEOUT_SEC", "30")),
             ami_host=_env("AMI_HOST", "asterisk"),
             ami_port=int(_env("AMI_PORT", "5038")),
@@ -71,12 +80,14 @@ class Settings:
             max_turns=int(_env("MAX_TURNS", "12")),
             max_call_sec=int(_env("MAX_CALL_SEC", "300")),
             max_utterance_sec=int(_env("MAX_UTTERANCE_SEC", "20")),
-            silence_sec=int(_env("SILENCE_SEC", "3")),
+            silence_sec=int(_env("SILENCE_SEC", "4")),
             min_speech_sec=float(_env("MIN_SPEECH_SEC", "0.3")),
             fallback_sound=_env("FALLBACK_SOUND", "beep"),
             directory_path=Path(_env("DIRECTORY_PATH", str(Path(__file__).parent.parent / "directory.json"))),
             cors_origins=_env("CORS_ORIGINS", "*"),
             ringback_sec=int(_env("RINGBACK_SEC", "3")),
+            default_trainee=_env("DEFAULT_TRAINEE", "ws01"),
+            default_112_scenario=_env("DEFAULT_112_SCENARIO", "scenario_001"),
             sessions_log_path=Path(_env("SESSIONS_LOG_PATH", "/data/sessions.log")),
             recordings_dir=_env("RECORDINGS_DIR", "/recordings"),
             recordings_base_url=_url("RECORDINGS_BASE_URL", "http://localhost:8090"),

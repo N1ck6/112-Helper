@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     ML_SERVICE_URL: str = "http://localhost:8100"
     ML_USE_STUB: bool = True
     ML_TIMEOUT_SECONDS: float = 20.0
+    #: Метод, который ML-сервис не реализовал (501) или не смог выполнить, считают правила.
+    ML_FALLBACK_TO_RULES: bool = True
     TELEPHONY_SERVICE_URL: str = "http://localhost:8200"
     TELEPHONY_USE_STUB: bool = True
     TELEPHONY_WEBHOOK_TOKEN: str = "dev-telephony-token"

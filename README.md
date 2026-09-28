@@ -28,9 +28,10 @@
 | Модуль | Роль |
 |--------|------|
 | **telephony** | SIP-сервер, звонки, RTP, запись, virtual caller, voice-service |
-| **backend** | сессии, сценарии, статусы звонков, API для frontend/ML/telephony |
+| **backend** | пользователи и роли, занятия, карточки, оценки, отчёты; API для frontend/ML/telephony |
 | **frontend** | учебный интерфейс оператора (имитация АРМ) |
-| **ml** | LLM и логика сценария; не встраивается в SIP-код |
+| **ml** | классификатор, генерация сценариев, оценка, реплики собеседников, LLM (Ollama) |
+| **deploy** | nginx единой точки входа, надстройка телефонии для полного стенда |
 
 ## Стек
 
@@ -46,23 +47,49 @@
 
 ## С чего начать
 
-Весь стенд одной командой (из корня репозитория):
+Весь комплекс (frontend, backend + PostgreSQL, ML + локальная LLM, телефония) — одной командой
+из корня репозитория:
 
 ```bash
-docker compose up -d --build
+docker compose --profile llm up -d --build
 ```
 
-АРМ — http://localhost:8080 (с другого ПК — `http://<IP>:8080`). Первый старт скачивает
-модели STT/TTS (~0.6 ГБ, интернет нужен один раз). Настройки телефонии — `telephony/.env`
-(необязателен, шаблон `telephony/.env.example`); голос — софтфон на рабочем месте
-(`ws01`…`ws20`, сервер `<IP>:5063`). Подробно — [telephony/README.md](telephony/README.md).
-Сейчас в стенде: телефония, заглушки ML/Backend, frontend; backend / ml / PostgreSQL
-подключаются в корневой `docker-compose.yml` по мере готовности.
+Без профиля `llm` стенд поднимается без Ollama: ML работает на классификаторе и правилах,
+анализ текста через LLM (`/analyze`) недоступен.
 
-Автотесты (нужен уже запущенный Docker-стенд):
+| Адрес | Что это |
+|---|---|
+| http://localhost:8080 | АРМ (с другого ПК — `http://<IP>:8080`); через него же браузер ходит в `/api/`, `/telephony/`, `/ml/dialogue/` |
+| http://localhost:8000/docs | API backend |
+| http://localhost:8100/docs | API ML-сервиса |
+| `<IP>:5063` UDP | SIP для софтфона рабочего места (`ws01`…`ws20`) |
+
+Первый старт скачивает модели STT/TTS (~0.6 ГБ) и LLM `qwen3:4b` (~2.5 ГБ); интернет нужен
+один раз, дальше стенд работает без сети. Учебные учётные записи (создаёт `backend/scripts/seed.py`):
+`admin` / `Admin#2026`, `teacher` / `Teacher#2026`, `student` / `Student#2026`.
+Обучающийся входит в роли «Оператор» или «Диспетчер», выбирая номер рабочего места.
+
+Как связаны части (контракты — `telephony/API.md`, `backend/docs/INTEGRATION.md`):
+
+```text
+frontend ─/api/v1─> backend ──> PostgreSQL
+    │                  ├─ генерация и оценка ──> ML   (что ML не умеет, 501 или сбой — правила backend)
+    │                  └─ /api/v1/calls/originate ──> телефония (входящий 112 на рабочее место)
+    └─/telephony/──> телефония ─/dialogue/turn─> ML ─(profile llm)─> Ollama
+                         └─ события звонка ──> backend /api/v1/telephony/events (X-Telephony-Token)
+```
+
+Настройки — `.env` в корне (шаблон `.env.example`) и `telephony/.env` (шаблон
+`telephony/.env.example`). Оба файла необязательны, но для эксплуатации нужно сменить
+`SECRET_KEY`, `POSTGRES_PASSWORD`, `TELEPHONY_WEBHOOK_TOKEN` и пароли SIP/AMI.
+
+Автотесты (нужен запущенный стенд; пароль AMI — из `telephony/.env`):
 
 ```bash
 pip install -r tests/requirements.txt
+```
+
+```bash
 pytest tests/ -v
 ```
 
@@ -73,6 +100,7 @@ telephony/      SIP/VoIP, запись, virtual caller, voice-service
 backend/        API сессий, сценариев, статусов звонка
 frontend/       UI учебного АРМ
 ml/             LLM и сценарная логика
+deploy/         nginx стенда, подключение телефонии к ML/Backend
 tests/          pytest, AMI-клиент
 data/           записи, логи сессий (локально)
 .env.example    перечень переменных окружения

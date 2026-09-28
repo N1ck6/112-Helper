@@ -14,6 +14,12 @@ Backend ожидает сервис по адресу `ML_SERVICE_URL` (по у�
 
 Реализация клиента: `app/integrations/ml_client.py`, класс `HttpMLClient` (там же список путей).
 
+В полном стенде (`ML_USE_STUB=false`) работает `HybridMLClient`: каждый метод сначала идёт в ML-сервис,
+а если тот ответил `501` (метод не реализован), ошибкой или не успел за `ML_TIMEOUT_SECONDS` — метод
+выполняют правила `StubMLClient` (ответ помечен `stub: true` и `fallback_reason`). Выключается
+`ML_FALLBACK_TO_RULES=false`. Сейчас ML-сервис реализует генерацию сценариев и оценку ответа
+по сценариям, которые сгенерировал сам (`ml/integration/`).
+
 | Метод backend | HTTP | Путь | Когда вызывается |
 |---|---|---|---|
 | `generate_scenarios` | POST | `/api/v1/generate/scenarios` | преподаватель нажал «сгенерировать сценарии» |
@@ -347,8 +353,9 @@ POST /api/v1/incidents/import
 
 Также используется `POST /api/v1/calls/hangup` с `{"sip_call_id": "..."}` и `GET /health`.
 
-Номер SIP-аккаунта обучающегося backend берёт из `users.preferences.sip_extension` — его можно
-задать при создании пользователя.
+Номер SIP-аккаунта обучающегося backend берёт из `users.preferences.sip_extension`, а если его нет —
+номер рабочего места, за которым обучающийся вошёл в занятие (телефония сопоставляет `05` с `ws05`).
+Реализация на стороне телефонии — `telephony/API.md` §7.
 
 ### 2.2 Телефония → backend (вебхук)
 

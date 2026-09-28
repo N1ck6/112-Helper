@@ -997,6 +997,53 @@ def _grammar_check(text: str, rules: dict[str, Any]) -> dict[str, Any]:
     return {"score": score, "errors": errors}
 
 
+# ------------------------------------------------------------------ гибрид
+class HybridMLClient:
+    """ML-сервис с откатом на правила по каждому методу.
+
+    ML-сервис команды реализует контракт частично: на то, чего он не умеет, он отвечает
+    501, а при сбое или таймауте ответа нет вовсе. В обоих случаях метод выполняют правила
+    StubMLClient, чтобы занятие не останавливалось (оценка не зависает в outbox, генерация
+    не падает). Ответ правил помечен `stub: true` и `fallback_reason` — в ml_results видно,
+    кто считал.
+    """
+
+    name = "hybrid"
+
+    def __init__(self) -> None:
+        self.http = HttpMLClient()
+        self.rules = StubMLClient()
+
+    async def _call(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await getattr(self.http, method)(payload)
+        except IntegrationError as exc:
+            logger.info("ml_fallback_to_rules", extra={"method": method, "reason": exc.message})
+            response = await getattr(self.rules, method)(payload)
+            response["fallback_reason"] = exc.message
+            return response
+
+    async def generate_scenarios(self, payload): return await self._call("generate_scenarios", payload)
+
+    async def correct_scenario(self, payload): return await self._call("correct_scenario", payload)
+
+    async def evaluate_attempt(self, payload): return await self._call("evaluate_attempt", payload)
+
+    async def check_grammar(self, payload): return await self._call("check_grammar", payload)
+
+    async def analytics(self, payload): return await self._call("analytics", payload)
+
+    async def recommendations(self, payload): return await self._call("recommendations", payload)
+
+    async def index_material(self, payload): return await self._call("index_material", payload)
+
+    async def health(self) -> dict[str, Any]:
+        return {**await self.http.health(), "fallback": "rules"}
+
+    async def close(self) -> None:
+        await self.http.close()
+
+
 # -------------------------------------------------------------------- фабрика
 _ml_client: MLClient | None = None
 
@@ -1007,6 +1054,9 @@ def get_ml_client() -> MLClient:
         if settings.ML_USE_STUB:
             logger.info("ml_client_mode", extra={"mode": "stub"})
             _ml_client = StubMLClient()
+        elif settings.ML_FALLBACK_TO_RULES:
+            logger.info("ml_client_mode", extra={"mode": "hybrid", "url": settings.ML_SERVICE_URL})
+            _ml_client = HybridMLClient()
         else:
             logger.info("ml_client_mode", extra={"mode": "http", "url": settings.ML_SERVICE_URL})
             _ml_client = HttpMLClient()

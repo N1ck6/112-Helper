@@ -16,6 +16,10 @@
     POST   /calls/{call_id}/hangup       завершить звонок
     GET    /events[?trainee=&session_id=&call_id=]  поток событий (Server-Sent Events)
 
+Контракт Backend (backend/docs/INTEGRATION.md §2.1) — те же звонки в его терминах:
+    POST   /api/v1/calls/originate       входящий 112 обучающемуся или отработка (direction=outbound)
+    POST   /api/v1/calls/hangup          {"sip_call_id": ...}
+
 CORS разрешён (CORS_ORIGINS): frontend обращается к API прямо из браузера.
 """
 
@@ -46,6 +50,8 @@ CHANNEL_RE = re.compile(r"^(PJSIP/[A-Za-z0-9_.-]{1,64}|Local/[A-Za-z0-9_.-]{1,64
 CALL_PATH_RE = re.compile(r"^/calls/([A-Za-z0-9_.-]{1,64})(/hangup)?$")
 TRAINEE_PATH_RE = re.compile(r"^/trainees/([A-Za-z0-9_.-]{1,64})/(context|status)$")
 DIAL_RE = re.compile(r"^[0-9]{2,6}$")
+TRAINEE_RE = re.compile(r"^ws[0-9]{2}$")
+WORKPLACE_RE = re.compile(r"^[0-9]{1,2}$")   # номер АРМ из Backend: "03" -> ws03
 RUN_CONTEXT = "training-run"  # см. extensions.conf
 DIAL_CONTEXT = "internal"     # контекст телефонов рабочих мест: набор с панели = набор с трубки
 CHANNEL_POLL_SEC = 2
@@ -64,6 +70,13 @@ def _caller_id(fmt: str, persona: dict) -> str:
     safe = {k: str(v or "").replace('"', "'") for k, v in persona.items()}
     number = re.sub(r"[^0-9+]", "", safe.get("number", "")) or "700"
     return fmt.format(**{**safe, "number": number})
+
+
+def _backend_ids(payload: dict) -> dict | None:
+    """id занятия / попытки / обучающегося из Backend — вернутся ему в событиях звонка."""
+    src = payload.get("backend") if isinstance(payload.get("backend"), dict) else payload
+    ids = {k: str(src[k]) for k in ("lesson_id", "attempt_id", "student_id") if src.get(k)}
+    return ids or None
 
 
 class ApiError(Exception):
@@ -183,7 +196,8 @@ class CallControl:
 
         call = self.registry.add(Call(call_id=uuid.uuid4().hex, session_id=session_id, scenario_id=scenario_id,
                                       direction="outbound", trainee=trainee,
-                                      call_type=call_type, persona=persona, card=card, report=report))
+                                      call_type=call_type, persona=persona, card=card, report=report,
+                                      backend=_backend_ids(payload)))
         self.events.emit("call.dialing", call_id=call.call_id, session_id=session_id, scenario_id=scenario_id,
                          call_type=call_type, trainee=call.trainee, channel=channel,
                          persona=persona and {k: persona.get(k) for k in ("service", "name", "position", "number")})
@@ -230,7 +244,8 @@ class CallControl:
         call = self.registry.add(Call(call_id=uuid.uuid4().hex, session_id=session_id,
                                       scenario_id=target.get("scenario_id") or "", direction="inbound",
                                       trainee=trainee, call_type=target["call_type"], persona=target["persona"],
-                                      card=workplace.get("card"), dialed=number))
+                                      card=workplace.get("card"), dialed=number,
+                                      backend=_backend_ids(payload)))
         persona = target["persona"] or {"service": target["title"], "number": number}
         self.events.emit("call.dialing", call_id=call.call_id, session_id=session_id, scenario_id=call.scenario_id,
                          call_type=call.call_type, trainee=trainee, channel=channel, dialed=number,
@@ -309,6 +324,55 @@ class CallControl:
         except (OSError, AMIError) as exc:
             raise ApiError(HTTPStatus.BAD_GATEWAY, f"AMI: {exc}") from exc
         return call
+
+    # --- контракт Backend (INTEGRATION.md §2.1) ----------------------------
+    def _trainee_from(self, value) -> str:
+        """SIP-аккаунт рабочего места: ws05 как есть, номер АРМ «05» -> ws05, иначе DEFAULT_TRAINEE."""
+        value = str(value or "").strip()
+        if TRAINEE_RE.match(value):
+            return value
+        if WORKPLACE_RE.match(value):
+            return f"ws{int(value):02d}"
+        return self.s.default_trainee
+
+    def backend_originate(self, payload: dict) -> dict:
+        """Backend просит поднять вызов: входящий 112 на рабочее место или отработку по карточке."""
+        ids = _backend_ids(payload)
+        session_id = (ids or {}).get("lesson_id") or str(uuid.uuid4())
+        card = {"number": payload.get("card_no")} if payload.get("card_no") else None
+        if payload.get("direction") == "outbound":
+            # отработка: обучающийся (caller_number) звонит в службу или заявителю (callee_number)
+            trainee = self._trainee_from(payload.get("caller_number"))
+            base = {"trainee": trainee, "session_id": session_id, "backend": ids, "card": card}
+            if payload.get("kind") == "applicant":
+                call = self.start_call({**base, "call_type": APPLICANT})
+            else:
+                ref = payload.get("callee_name") or payload.get("callee_number")
+                if self.directory.resolve(ref) is None:
+                    ref = payload.get("callee_number")
+                if self.directory.resolve(ref) is not None:
+                    call = self.start_call({**base, "call_type": DISPATCH, "service": ref})
+                else:
+                    call = self.dial({**base, "dial": str(payload.get("callee_number") or "")})
+        else:
+            # входящий вызов 112 обучающемуся (callee_number — его SIP-аккаунт или номер АРМ)
+            trainee = self._trainee_from(payload.get("callee_number"))
+            call = self.start_call({"call_type": INCIDENT_112, "trainee": trainee, "session_id": session_id,
+                                    "scenario_id": payload.get("scenario_id") or self.s.default_112_scenario,
+                                    "card": card, "backend": ids})
+        number = (call.persona or {}).get("number") or call.dialed
+        outbound = payload.get("direction") == "outbound"
+        return {"sip_call_id": call.call_id, "status": "ringing",
+                "caller_number": trainee if outbound else number,
+                "callee_number": number if outbound else trainee,
+                "trainee": trainee, "latency_ms": None}
+
+    def backend_hangup(self, payload: dict) -> dict:
+        call = self.get_call(str(payload.get("sip_call_id") or ""))
+        if call.status in ACTIVE:
+            self.hangup(call.call_id)
+            return {"sip_call_id": call.call_id, "status": "ending"}
+        return {"sip_call_id": call.call_id, "status": call.status}   # уже завершён — не ошибка
 
     def endpoints(self) -> list[dict]:
         try:
@@ -400,6 +464,10 @@ class ApiHandler(BaseHTTPRequestHandler):
             return HTTPStatus.OK, c.directory.numbers()
         if method == "GET" and path == "/endpoints":
             return HTTPStatus.OK, c.endpoints()
+        if method == "POST" and path == "/api/v1/calls/originate":
+            return HTTPStatus.OK, c.backend_originate(self._read_json())
+        if method == "POST" and path == "/api/v1/calls/hangup":
+            return HTTPStatus.OK, c.backend_hangup(self._read_json())
         if path == "/calls":
             if method == "POST":
                 return HTTPStatus.ACCEPTED, c.start_call(self._read_json()).to_dict()

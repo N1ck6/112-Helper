@@ -165,3 +165,18 @@ data/processed/classified_tickets.json
 data/processed/classification_review.json
 
 Сама модель Qwen также не загружается в репозиторий и устанавливается отдельно через Ollama.
+
+Интеграция с телефонией и Backend
+
+Модуль integration/ подключается в api.py одной строкой и реализует контракты из ТЗ (§6):
+
+* POST /dialogue/turn — реплики виртуальных собеседников в звонках (контракт telephony/API.md §3):
+  правила по типу звонка или локальная LLM (DIALOGUE_ENGINE=llm, модель DIALOGUE_LLM_MODEL);
+  сценарии голосовых вызовов 112 — data/dialogue_scenarios/;
+* POST /api/v1/generate/scenarios — генерация сценариев для Backend по классификатору (generate_scenario);
+* POST /api/v1/evaluate/attempt — оценка ответа обучающегося по сценарию ML (evaluate_answer);
+* остальные методы контракта Backend (backend/docs/INTEGRATION.md §1) отвечают 501 —
+  Backend считает их своими правилами, пока они не реализованы здесь.
+
+В полном стенде (корневой docker-compose.yml) сервис доступен как http://ml:8000,
+Ollama — http://ollama:11434 (профиль llm).

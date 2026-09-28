@@ -19,7 +19,11 @@
 | virtual-caller — API звонков, SSE | 8092 | Frontend, Backend |
 | voice-service — STT/TTS | 8091 | virtual-caller |
 | audio-tools — записи | 8090 | Frontend/Backend (проиграть или скачать запись) |
-| mocks — заглушки ML (`/ml`) и Backend (`/backend`) | 8093 | virtual-caller, пока нет настоящих |
+| mocks — заглушки ML (`/ml`) и Backend (`/backend`) | 8093 | только автономный стенд `telephony/` и профиль `mocks` |
+
+В полном стенде (корневой `docker-compose.yml`) телефония работает с настоящими сервисами:
+ML — `http://ml:8000` (`/dialogue/turn`), Backend — `http://api:8000/api/v1` (события в его формате, п. 2.1),
+а Backend поднимает звонки по своему контракту (п. 7). Браузер ходит через nginx: `/telephony/…`.
 
 ## Идентификаторы
 
@@ -153,7 +157,7 @@ Frontend/Backend сообщает при открытии карточки; ну
 ### `GET /health`
 ```json
 {"status": "ok", "ami": true, "voice_service": true, "ml": true, "backend": true,
- "ml_api_url": "http://mocks:8093/ml", "backend_url": "http://mocks:8093/backend",
+ "ml_api_url": "http://ml:8000", "backend_url": "http://api:8000/api/v1",
  "directory_contacts": 12, "active_calls": 0}
 ```
 `status: degraded` — нет ML или voice-service (`ml: false` — собеседники не ответят). `503` — нет Asterisk.
@@ -180,11 +184,36 @@ Frontend/Backend сообщает при открытии карточки; ну
 Для Backend: `call.ended` — готовая «отработка» карточки (служба = `persona.service`, кто принял =
 `persona.name`, суть = `transcript`, время, запись). Для оценки ML — `transcript` доклада диспетчера.
 
+### 2.1 Формат Backend (`BACKEND_EVENTS_FORMAT=backend`, полный стенд)
+
+Backend принимает только смену статуса вызова (`backend/docs/INTEGRATION.md` §2.2), поэтому в полном
+стенде события переводятся в его контракт и уходят с заголовком `X-Telephony-Token: <TELEPHONY_WEBHOOK_TOKEN>`:
+
+| Событие телефонии | `event` для Backend |
+|---|---|
+| `call.dialing` | `ringing` |
+| `call.started` | `answered` |
+| `call.ended` | `ended` |
+| `call.failed` | `missed` (`no_answer`, `busy`, `timeout`) или `failed` |
+| `call.utterance`, `call.error`, `operator.status` | не отправляются (есть в SSE и `sessions.log`) |
+
+```json
+{"sip_call_id": "4f0c…", "event": "ended", "lesson_id": "…", "attempt_id": "…", "student_id": "…",
+ "caller_number": "112", "callee_number": "ws05", "duration_ms": 41600,
+ "audio_path": "http://localhost:8090/4f0c….wav", "audio_format": "wav",
+ "meta": {"telephony_event": "call.ended", "session_id": "…", "call_type": "incident_112",
+          "trainee": "ws05", "reason": "completed", "persona": {…}, "transcript": […]}}
+```
+`lesson_id` / `attempt_id` / `student_id` есть, только если звонок поднял Backend (п. 7): он передал их
+в запросе, телефония возвращает их в каждом событии. `sip_call_id` = `call_id` телефонии.
+По умолчанию (`raw`) события уходят в исходном виде — так их принимает заглушка `mocks`.
+
 ---
 
 ## 3. ML: реплика собеседника
 
-`POST {ML_API_URL}/dialogue/turn` на каждом шаге. API **без состояния**: вся история в запросе.
+`POST {ML_API_URL}/dialogue/turn` на каждом шаге. Реализация — ML-сервис (`ml/integration/dialogue.py`),
+заглушка `mocks/ml_dialogue.py` — эталон правил для автономной разработки (тесты сверяют их ответы). API **без состояния**: вся история в запросе.
 
 ```json
 {
@@ -208,15 +237,20 @@ Frontend/Backend сообщает при открытии карточки; ну
   неполадка», звонок завершается (`ml_error`).
 - Сокращения адресов («ул.», «д.») раскрываются перед синтезом — ML может отдавать адрес как в карточке.
 
-Эталон — `mocks/ml_dialogue.py`: правила по `call_type` (приветствие, переспрос адреса, если его нет
-в докладе; «информация принята») и режим **LLM** — любой OpenAI-совместимый API:
+Движки: правила по `call_type` (приветствие, переспрос адреса, если его нет в докладе; «информация
+принята») и режим **LLM**. Вызов 112 без готового сценария (`scenario_id` не найден) строится из
+`context.card`: заявитель называет суть, адрес и пострадавших из карточки.
+
+В ML-сервисе полного стенда (корневой `.env`):
 ```env
 DIALOGUE_ENGINE=llm
-LLM_API_URL=http://host.docker.internal:11434/v1   # Ollama на этой машине / vLLM / внешний API
-LLM_MODEL=qwen2.5:7b
-LLM_API_KEY=                                        # если нужен
+DIALOGUE_LLM_MODEL=qwen3:4b-instruct   # Ollama стенда (профиль llm): docker exec trainer-ollama ollama pull qwen3:4b-instruct
+LLM_TIMEOUT_SEC=20
 ```
-При недоступности LLM ответ по правилам (`engine: rules-fallback`), звонок не срывается.
+Нужна instruct-модель: `qwen3:4b` рассуждает вслух (ответ 10+ с, без готовой реплики). Любой другой
+OpenAI-совместимый сервер — `LLM_API_URL=http://…/v1`, `LLM_API_KEY`. В заглушке `mocks` — те же
+`DIALOGUE_ENGINE`, `LLM_API_URL`, `LLM_MODEL`. При недоступности LLM ответ по правилам
+(`engine: rules-fallback`), звонок не срывается.
 
 ---
 
@@ -288,10 +322,35 @@ es.addEventListener("call.failed",    e => toast("Не дозвонились: "
 
 ## 6. Подключение настоящих ML и Backend
 
+Уже сделано в полном стенде: корневой `docker-compose.yml` подключает `telephony/docker-compose.yml`
+вместе с надстройкой `deploy/telephony.integration.yml`:
 ```env
-ML_API_URL=http://ml:8000          # телефония добавит /dialogue/turn
-BACKEND_URL=http://backend:8000    # телефония добавит /telephony/events; пусто — только журнал
+ML_API_URL=http://ml:8000                  # телефония добавит /dialogue/turn
+BACKEND_URL=http://api:8000/api/v1         # телефония добавит /telephony/events
+BACKEND_EVENTS_FORMAT=backend              # контракт Backend (п. 2.1)
+TELEPHONY_WEBHOOK_TOKEN=…                  # тот же, что у Backend
 ```
-Сервисы в одной Docker-сети (корневой `docker-compose.yml` подключает compose ролей через `include`).
-Сервис `mocks` можно оставить (простаивает) или убрать из `telephony/docker-compose.yml`.
-Проверка: `GET /health` → новые адреса, `"ml": true`; `python telephony/demo/demo_calls.py dispatch`.
+Сервис `mocks` там в профиле `mocks` (не запускается). Автономно (`cd telephony && docker compose up -d`)
+телефония по-прежнему работает с заглушками. Проверка: `GET /telephony/health` → `"ml": true, "backend": true`;
+`pytest tests/test_stage9_integration.py`.
+
+## 7. Контракт Backend: звонки занятия
+
+Backend вызывает телефонию по своему контракту (`backend/docs/INTEGRATION.md` §2.1,
+`TELEPHONY_SERVICE_URL=http://virtual-caller:8092`).
+
+### `POST /api/v1/calls/originate`
+```json
+{"lesson_id": "…", "attempt_id": "…", "student_id": "…", "card_no": "У-000012",
+ "caller_profile": {…}, "caller_number": "+7 …", "callee_number": "05", "record": true}
+```
+- Без `direction` — входящий вызов 112 обучающемуся: `callee_number` — SIP-аккаунт (`ws05`) или номер
+  рабочего места (`05` → `ws05`), иначе `DEFAULT_TRAINEE`. Сценарий — `scenario_id` или `DEFAULT_112_SCENARIO`.
+- `direction: "outbound"` — отработка: обучающийся (`caller_number`) звонит в службу (`callee_name` /
+  `callee_number` по справочнику, «101» → 2101) или заявителю (`kind: "applicant"`); номер не из
+  справочника набирается как есть.
+- Ответ `200`: `{"sip_call_id": "…", "status": "ringing", "caller_number": "…", "callee_number": "ws05",
+  "trainee": "ws05", "latency_ms": null}`. `409` — оператор в статусе «недоступен».
+
+### `POST /api/v1/calls/hangup`
+`{"sip_call_id": "…"}` → `{"status": "ending"}`; уже завершённый звонок — его статус, не ошибка.

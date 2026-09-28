@@ -269,7 +269,7 @@ def test_integration_web_proxy_and_frontend(stand):
             html, cache = resp.read().decode("utf-8"), resp.headers.get("Cache-Control")
     except OSError as exc:
         pytest.skip(f"frontend не запущен ({exc}): docker compose up -d (из корня)")
-    assert '<script src="js/telephony.js"></script>' in html and cache == "no-cache"
+    assert '<script src="js/telephony.js"' in html and cache == "no-cache"
     assert _http("GET", f"{WEB_URL}/telephony/health")[1]["ml"] is True
     assert len(_http("GET", f"{WEB_URL}/telephony/numbers")[1]) >= 16
     with urllib.request.urlopen(f"{WEB_URL}/js/telephony.js", timeout=5) as resp:

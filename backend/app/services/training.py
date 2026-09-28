@@ -57,6 +57,7 @@ from app.models.training import (
     LessonParticipant,
     ResponseStatusEntry,
     StudentAction,
+    Workplace,
 )
 from app.models.user import User
 from app.repositories.content import CardRepository, ReferenceRepository
@@ -1362,6 +1363,12 @@ class TrainingService:
         self, lesson: Lesson, attempt: CardAttempt, card: IncidentCard, student: User
     ) -> CallRecord | None:
         """Запрос к модулю телефонии на имитацию входящего вызова."""
+        #: Куда звонить: SIP-аккаунт из профиля, иначе номер рабочего места, за которым
+        #: сидит обучающийся (телефония сопоставляет «05» с аккаунтом ws05).
+        callee = (student.preferences or {}).get("sip_extension")
+        if not callee and attempt.workplace_id:
+            workplace = await self.session.get(Workplace, attempt.workplace_id)
+            callee = workplace.number if workplace else None
         try:
             response = await self.telephony.originate_call(
                 {
@@ -1371,7 +1378,7 @@ class TrainingService:
                     "card_no": card.card_no,
                     "caller_profile": card.caller_profile,
                     "caller_number": (card.caller_profile or {}).get("phone"),
-                    "callee_number": (student.preferences or {}).get("sip_extension"),
+                    "callee_number": callee,
                     "record": True,
                 }
             )

@@ -1,12 +1,18 @@
+// Связь с Backend (backend/docs/INTEGRATION.md §3): проверка доступности, вход по логину
+// и паролю, роли из /auth/me, токены (обновление по refresh_token).
+// Карточки, журнал и сеансы пока живут в localStorage: поток карточек, занятия и отчёты
+// Backend (/training, /lessons, /reports) интерфейс ещё не использует.
 (function () {
   const cfg = window.APP_CONFIG || {};
   const BASE = String(cfg.API_BASE_URL || "").replace(/\/$/, "");
-  const TIMEOUT_MS = 2500;
+  const HEALTH_URL = String(cfg.API_HEALTH_URL || "");
+  const TIMEOUT_MS = 8000;
   const LOG_LIMIT = 300;
+  // Роли Backend -> роли входа в интерфейсе: обучающийся работает оператором 112 или диспетчером ДДС
+  const ROLE_MAP = { student: ["student", "dispatcher"], teacher: ["teacher"], admin: ["admin"] };
 
   let online = null;
   let probing = null;
-  const lastSent = {};
 
   function readSession() {
     try {
@@ -16,53 +22,86 @@
     }
   }
 
-  async function request(method, path, body) {
-    if (!BASE) throw new Error("API_BASE_URL не задан");
+  function errorText(data, status) {
+    const err = data && data.error;
+    if (err && typeof err === "object") return err.message || err.code || "HTTP " + status;
+    return (data && (data.detail || err)) || "HTTP " + status;
+  }
+
+  async function send(method, url, body, token) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-    const token = readSession().token;
     const headers = {};
     if (body) headers["Content-Type"] = "application/json";
     if (token) headers.Authorization = "Bearer " + token;
     try {
-      const res = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: ctrl.signal });
+      const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined, signal: ctrl.signal });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "HTTP " + res.status);
-      return data;
+      return { res, data };
     } finally {
       clearTimeout(timer);
     }
   }
 
+  // access-токен живёт 30 минут: при token_expired один раз обновляем его и повторяем запрос
+  async function refreshToken() {
+    const s = readSession();
+    if (!s.refreshToken) return false;
+    const { res, data } = await send("POST", BASE + "/auth/refresh", { refresh_token: s.refreshToken });
+    if (!res.ok || !data.access_token) return false;
+    s.token = data.access_token;
+    s.refreshToken = data.refresh_token || s.refreshToken;
+    localStorage.setItem("ddsSession", JSON.stringify(s));
+    return true;
+  }
+
+  async function request(method, path, body) {
+    if (!BASE) throw new Error("API_BASE_URL не задан");
+    let { res, data } = await send(method, BASE + path, body, readSession().token);
+    if (res.status === 401 && data.error && data.error.code === "token_expired" && (await refreshToken())) {
+      ({ res, data } = await send(method, BASE + path, body, readSession().token));
+    }
+    if (!res.ok) throw new Error(errorText(data, res.status));
+    return data;
+  }
+
   function probe(force) {
     if (probing && !force) return probing;
-    probing = request("GET", "/health")
-      .then(() => (online = true))
+    probing = (HEALTH_URL ? send("GET", HEALTH_URL) : Promise.reject(new Error("API_HEALTH_URL не задан")))
+      .then(({ res }) => (online = res.ok))
       .catch(() => (online = false));
     return probing;
   }
 
+  // null — Backend недоступен (вход в демо-режиме); исключение — Backend отказал во входе
   async function login(payload) {
     if (!(await probe())) return null;
-    return request("POST", "/auth/login", payload);
+    const { res, data } = await send("POST", BASE + "/auth/login", { username: payload.username, password: payload.password });
+    if (!res.ok) throw new Error(errorText(data, res.status));
+    if (data.mfa_required) throw new Error("Для учётной записи включён второй фактор (MFA) — вход пока только через API");
+    const me = await send("GET", BASE + "/auth/me", null, data.access_token);
+    if (!me.res.ok) throw new Error(errorText(me.data, me.res.status));
+    const allowed = (me.data.roles || []).reduce((acc, r) => acc.concat(ROLE_MAP[r] || []), []);
+    if (allowed.indexOf(payload.role) === -1) {
+      throw new Error("У учётной записи нет доступа к выбранной роли");
+    }
+    return {
+      token: data.access_token,
+      refreshToken: data.refresh_token,
+      userId: me.data.id,
+      fullName: me.data.full_name || me.data.username,
+      roles: me.data.roles || [],
+      permissions: me.data.permissions || [],
+    };
   }
 
-  async function pullIncidents() {
-    if (!(await probe())) return null;
-    const list = await request("GET", "/incidents").catch(() => null);
-    if (Array.isArray(list)) list.forEach((i) => (lastSent[i.id] = JSON.stringify(i)));
-    return Array.isArray(list) ? list : null;
+  // Карточки пока хранит браузер: /incidents Backend — это классификатор происшествий,
+  // а не карточки интерфейса, поэтому синхронизации с ним нет.
+  function pullIncidents() {
+    return Promise.resolve(null);
   }
 
-  function syncIncidents(list) {
-    if (online !== true) return;
-    list.forEach((inc) => {
-      const json = JSON.stringify(inc);
-      if (lastSent[inc.id] === json) return;
-      lastSent[inc.id] = json;
-      request("PUT", "/incidents/" + encodeURIComponent(inc.id), inc).catch(() => delete lastSent[inc.id]);
-    });
-  }
+  function syncIncidents() {}
 
   function readLog() {
     try {
@@ -78,7 +117,6 @@
     const list = readLog();
     list.push(entry);
     localStorage.setItem("ddsLog", JSON.stringify(list.slice(-LOG_LIMIT)));
-    if (online === true) request("POST", "/events", entry).catch(() => {});
   }
 
   const SESSIONS_KEY = "ddsSessions";

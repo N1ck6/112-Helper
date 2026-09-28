@@ -1,0 +1,22 @@
+# Надстройка над telephony/docker-compose.yml для полного стенда (подключается из корневого
+# docker-compose.yml через include). Сам telephony/docker-compose.yml остаётся автономным:
+# из папки telephony/ он поднимается с заглушками mocks, как раньше.
+#
+# Здесь телефония переключается с заглушек на сервисы команды:
+#   ML      — реплики собеседников: POST http://ml:8000/dialogue/turn
+#   Backend — события звонков:     POST http://api:8000/api/v1/telephony/events (X-Telephony-Token)
+# Заглушка mocks в полном стенде не нужна: она только в профиле mocks (для отладки).
+
+services:
+  virtual-caller:
+    depends_on: !override
+      - voice-service
+    environment:
+      - ML_API_URL=http://ml:8000
+      - BACKEND_URL=http://api:8000/api/v1
+      - BACKEND_EVENTS_FORMAT=backend
+      - TELEPHONY_WEBHOOK_TOKEN=${TELEPHONY_WEBHOOK_TOKEN:-dev-telephony-token}
+      - DEFAULT_TRAINEE=${DEFAULT_TRAINEE:-ws01}
+
+  mocks:
+    profiles: [mocks]

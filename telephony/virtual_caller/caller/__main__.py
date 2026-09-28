@@ -49,7 +49,8 @@ def main() -> None:
     registry = CallRegistry()
     contexts = TraineeContexts()
     directory = Directory.load(s.directory_path)
-    events = EventSink(s.sessions_log_path, s.backend_url)
+    events = EventSink(s.sessions_log_path, s.backend_url, fmt=s.backend_events_format, token=s.backend_token,
+                       backend_ids=lambda call_id: getattr(registry.get(call_id), "backend", None))
     voice = VoiceClient(s.voice_service_url, s.http_timeout_sec)
     runner = DialogueRunner(s, voice, DialogueClient(s.ml_api_url, s.http_timeout_sec), events, registry,
                             directory, contexts)

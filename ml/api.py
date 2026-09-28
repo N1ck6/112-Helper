@@ -8,6 +8,7 @@ from matcher import match_situation, prepare_incidents
 from llm_processor import analyze_text
 from scenario_generator import generate_scenario
 from evaluator import evaluate_answer
+from integration import build_router
 
 
 app = FastAPI(
@@ -142,6 +143,10 @@ def run_classification(text: str) -> Dict[str, Any]:
     )
 
     return build_classification_response(result)
+
+
+# Контракты для телефонии (/dialogue/turn) и Backend (/api/v1/...) — integration/routes.py
+app.include_router(build_router(classifier_data, run_classification))
 
 
 @app.get("/health")
