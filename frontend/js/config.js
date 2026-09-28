@@ -1,15 +1,22 @@
 window.APP_CONFIG = (function () {
-  // На стенде (docker compose) всё идёт через nginx этого же адреса: /api/, /telephony/, /ml/.
-  // Страница открыта с GitHub Pages или файлом — сервисы стенда на этом же ПК.
-  const standalone = location.protocol === "file:" || location.hostname.endsWith("github.io");
+  // Стенд (docker compose): страницу отдаёт nginx стенда — на порту 8080 или за обратным
+  // прокси на 80/443, и все сервисы идут через него же: /api/, /telephony/, /ml/.
+  // Иначе (Live Server, другой dev-сервер, файл, GitHub Pages) — сервисы стенда на этом ПК
+  // по прямым портам. Другой FRONTEND_PORT стенда тоже попадёт сюда: работает на этом ПК.
+  const STAND_PORTS = ["", "80", "443", "8080"];
+  const onStand = /^https?:$/.test(location.protocol) && !location.hostname.endsWith("github.io") &&
+    STAND_PORTS.indexOf(location.port) !== -1;
+  const host = location.protocol === "file:" || location.hostname.endsWith("github.io") ? "localhost" : location.hostname;
+  const direct = (port, path) => `http://${host}:${port}${path}`;
   return {
     // Backend (backend/docs/INTEGRATION.md §3): вход и роли. Недоступен — демо-режим в браузере.
-    API_BASE_URL: standalone ? "http://localhost:8000/api/v1" : "api/v1",
-    API_HEALTH_URL: standalone ? "http://localhost:8000/health/live" : "api/health/live",
+    API_BASE_URL: onStand ? "api/v1" : direct(8000, "/api/v1"),
+    API_HEALTH_URL: onStand ? "api/health/live" : direct(8000, "/health/live"),
     // API телефонии (telephony/API.md)
-    TELEPHONY_API_URL: standalone ? "http://localhost:8092" : "telephony",
+    TELEPHONY_API_URL: onStand ? "telephony" : direct(8092, ""),
     // Звонок «В браузере» (js/webphone.js): реплики собеседников из ML по контракту
-    // POST {ML_DIALOGUE_URL}/dialogue/turn (telephony/API.md §3). Пусто — встроенные правила.
-    ML_DIALOGUE_URL: standalone ? "" : "ml",
+    // POST {ML_DIALOGUE_URL}/dialogue/turn (telephony/API.md §3). Пусто — встроенные правила
+    // (ML наружу открыт только через nginx стенда).
+    ML_DIALOGUE_URL: onStand ? "ml" : "",
   };
 })();

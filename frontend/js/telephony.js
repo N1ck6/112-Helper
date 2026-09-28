@@ -409,8 +409,11 @@
     if (e.key === "Escape" && !pop.hidden) openBook(false);
   });
 
-  // без телефонии справочник стенда — встроенный в браузерный телефон
-  if (web) standNumbers = web.directory().map((c) => ({ number: c.number, title: c.service, name: c.name }));
+  // без телефонии справочник стенда — встроенная копия из js/webphone.js; нужна и там, где
+  // синтеза речи нет (встроенный браузер VS Code и др.), поэтому не через `web`
+  if (window.DDS_WEBPHONE) {
+    standNumbers = window.DDS_WEBPHONE.directory().map((c) => ({ number: c.number, title: c.service, name: c.name }));
+  }
   api("GET", "/numbers").then((list) => {
     if (Array.isArray(list) && list.length) standNumbers = list;
   }).catch(() => {});
