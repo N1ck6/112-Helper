@@ -45,6 +45,11 @@ class Settings:
     max_utterance_sec: int
     silence_sec: int
     min_speech_sec: float
+    # Перебивание собеседника и запись без потерь (ear.py): поток голоса оператора от Asterisk
+    barge_in: bool
+    barge_in_min_sec: float
+    vad_threshold: float
+    recordings_local_dir: Path
     fallback_sound: str
     # Справочник служб, CORS для frontend (браузер ходит в API напрямую)
     directory_path: Path
@@ -82,6 +87,10 @@ class Settings:
             max_utterance_sec=int(_env("MAX_UTTERANCE_SEC", "20")),
             silence_sec=int(_env("SILENCE_SEC", "4")),
             min_speech_sec=float(_env("MIN_SPEECH_SEC", "0.3")),
+            barge_in=_env("BARGE_IN", "1") not in ("0", "false", "no"),
+            barge_in_min_sec=float(_env("BARGE_IN_MIN_SEC", "0.3")),
+            vad_threshold=float(_env("VAD_THRESHOLD", "400")),
+            recordings_local_dir=Path(_env("RECORDINGS_LOCAL_DIR", "/recordings")),
             fallback_sound=_env("FALLBACK_SOUND", "beep"),
             directory_path=Path(_env("DIRECTORY_PATH", str(Path(__file__).parent.parent / "directory.json"))),
             cors_origins=_env("CORS_ORIGINS", "*"),

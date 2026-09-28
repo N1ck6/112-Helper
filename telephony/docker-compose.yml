@@ -68,8 +68,14 @@ services:
       - RINGBACK_SEC=${RINGBACK_SEC:-3}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - RECORDINGS_BASE_URL=${RECORDINGS_BASE_URL:-http://localhost:8090}
+      # Перебивание собеседника: оператор заговорил — реплика обрывается (ear.py)
+      - BARGE_IN=${BARGE_IN:-1}
+      - BARGE_IN_MIN_SEC=${BARGE_IN_MIN_SEC:-0.3}
+      - VAD_THRESHOLD=${VAD_THRESHOLD:-400}
     volumes:
       - ../data/sessions:/data
+      # поток голоса оператора от Asterisk (MixMonitor r()) и реплики оператора для STT
+      - ../data/recordings:/recordings
     restart: unless-stopped
 
   audio-tools:
