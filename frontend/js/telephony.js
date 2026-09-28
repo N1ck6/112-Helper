@@ -112,16 +112,16 @@
   .tel-dot.live{background:var(--accent-500);animation:tel-pulse 1s infinite}
   @keyframes tel-pulse{50%{opacity:.35}}
   .tel-title{font-weight:700;white-space:nowrap}
-  .tel-sub{color:var(--ink-600);margin-left:auto;font-size:.72rem;text-align:right}
+  .tel-sub{color:var(--ink-600);margin-left:auto;font-size:.9em;text-align:right}
   .tel-body{border-top:1px solid var(--border-600);padding:10px 12px;display:grid;gap:10px;overflow-y:auto;overflow-x:hidden}
   .tel-body>*{min-width:0} .tel-logitem{overflow-wrap:anywhere}
   .tel-widget.collapsed .tel-body{display:none}
-  .tel-section-title{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-600);font-weight:700}
+  .tel-section-title{font-size:.85em;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-600);font-weight:700}
   .tel-call-title{font-weight:600} .tel-state{color:var(--ink-400)}
   .tel-log{max-height:200px;overflow-y:auto;display:grid;gap:6px}
   .tel-line{padding:6px 8px;border-radius:var(--radius-md);background:var(--panel-700);line-height:1.35}
   .tel-line.operator{background:transparent;border:1px solid var(--border-600)}
-  .tel-line b{display:block;font-size:.68rem;color:var(--ink-600);font-weight:600;margin-bottom:2px}
+  .tel-line b{display:block;font-size:.85em;color:var(--ink-600);font-weight:600;margin-bottom:2px}
   .tel-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   .tel-btn{font:inherit;font-weight:600;cursor:pointer;border-radius:var(--radius-md);padding:6px 10px;
     border:1px solid var(--border-600);background:var(--panel-700);color:var(--ink-100)}
@@ -129,15 +129,15 @@
   .tel-btn.primary{background:var(--success-500);border-color:transparent;color:#fff}
   .tel-btn.danger{background:var(--accent-500);border-color:transparent;color:#fff}
   .tel-btn:disabled{opacity:.45;cursor:default}
-  .tel-display{flex:1;min-width:0;font:600 1rem var(--font-mono);letter-spacing:.08em;padding:6px 8px;
+  .tel-display{flex:1;min-width:0;font:600 1.25em var(--font-mono);letter-spacing:.08em;padding:6px 8px;
     border-radius:var(--radius-md);border:1px solid var(--border-600);background:var(--panel-900);color:var(--ink-100)}
   .tel-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-  .tel-keys .tel-btn{font-family:var(--font-mono);font-size:.95rem;padding:7px 0}
+  .tel-keys .tel-btn{font-family:var(--font-mono);font-size:1.2em;padding:.55em 0}
   .tel-select{flex:1;min-width:0;font:inherit;padding:6px;border-radius:var(--radius-md);
     border:1px solid var(--border-600);background:var(--panel-900);color:var(--ink-100)}
   .tel-logs{display:grid;gap:6px}
   .tel-logitem{padding:6px 8px;border-radius:var(--radius-md);border:1px solid var(--border-600);line-height:1.4}
-  .tel-logitem .muted,.tel-hint{color:var(--ink-600);font-size:.72rem}
+  .tel-logitem .muted,.tel-hint{color:var(--ink-600);font-size:.9em}
   .tel-widget audio{width:100%;height:32px}
   .tel-chip-call{font:inherit;cursor:pointer;border:none;background:var(--accent-500);color:#fff;border-radius:999px;
     padding:1px 8px;margin-left:6px;font-size:.7rem;font-weight:700}
@@ -157,6 +157,11 @@
   .tel-num:hover,.tel-num:focus-visible{background:var(--panel-700);outline:none}
   .tel-num b{font:700 1rem var(--font-mono);min-width:46px}
   .tel-num span{flex:1;color:var(--ink-400);overflow-wrap:anywhere}
+  .tel-widget.docked{position:static;z-index:auto;width:auto;max-height:none;flex:1;min-height:0;
+    box-shadow:none;border-radius:var(--radius-md);font-size:1.1em}
+  .tel-widget.docked .tel-head{cursor:default}
+  .tel-widget.docked .tel-body{flex:1;min-height:0;align-content:start}
+  .tel-widget.docked .tel-log{max-height:none;flex:none}
   @media (max-width:720px){.tel-popover{left:16px;right:16px;width:auto;bottom:auto;top:16px}}
   `;
   document.head.appendChild(style);
@@ -227,7 +232,36 @@
     widget.classList.toggle("collapsed", !open);
     document.body.classList.toggle("tel-open", open);
   }
-  widget.querySelector(".tel-head").addEventListener("click", () => setOpen(widget.classList.contains("collapsed")));
+  widget.querySelector(".tel-head").addEventListener("click", () => {
+    if (!widget.classList.contains("docked")) setOpen(widget.classList.contains("collapsed"));
+  });
+
+  // В карточке оператора панель встроена в правую колонку окна (#phone-dock),
+  // вне карточки — плавающая в углу экрана.
+  const dock = $("phone-dock");
+  let undockTimer = null;
+  let floatOpen = false;
+  function setDocked(on) {
+    clearTimeout(undockTimer);
+    if (!dock) return;
+    openBook(false);
+    if (on) {
+      if (widget.classList.contains("docked")) return;
+      floatOpen = !widget.classList.contains("collapsed");
+      dock.textContent = "";
+      dock.appendChild(widget);
+      widget.classList.add("docked");
+      widget.classList.remove("collapsed");
+      document.body.classList.remove("tel-open");
+    } else {
+      // ждём окончания анимации закрытия окна, чтобы колонка не опустела раньше времени
+      undockTimer = setTimeout(() => {
+        widget.classList.remove("docked");
+        document.body.appendChild(widget);
+        setOpen(floatOpen);
+      }, 320);
+    }
+  }
   el.change.addEventListener("click", () => {
     const next = prompt("SIP-аккаунт рабочего места (ws01…ws20):", WS);
     if (next && next.trim() && next.trim() !== WS) {
@@ -269,6 +303,10 @@
 
   function openBook(open) {
     if (open) renderBook();
+    // у встроенной панели справочник открывается слева от неё
+    const r = widget.classList.contains("docked") && open ? widget.getBoundingClientRect() : null;
+    pop.style.right = r ? Math.max(16, window.innerWidth - r.left + 12) + "px" : "";
+    pop.style.bottom = r ? Math.max(16, window.innerHeight - r.bottom) + "px" : "";
     pop.hidden = !open;
     el.book.setAttribute("aria-expanded", open ? "true" : "false");
   }
@@ -564,9 +602,9 @@
     renderLogs();
   }
 
-  document.addEventListener("dds:card-open", (e) => openCard(e.detail, "sheet"));
+  document.addEventListener("dds:card-open", (e) => { setDocked(true); openCard(e.detail, "sheet"); });
   document.addEventListener("dds:review-open", (e) => openCard(e.detail, "review"));
-  document.addEventListener("dds:card-close", closeCard);
+  document.addEventListener("dds:card-close", () => { setDocked(false); closeCard(); });
   document.addEventListener("dds:review-close", closeCard);
   document.addEventListener("dds:callback", (e) => {
     placeCall({ call_type: "applicant", card: reviewCard(e.detail) }, "Звонок заявителю");

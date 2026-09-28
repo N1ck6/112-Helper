@@ -68,7 +68,6 @@
       <td data-label="Сценарий"><b>${ctx.esc(s.title)}</b><br><span class="cell-muted">${ctx.esc(s.address)}</span></td>
       <td data-label="Тип">${ctx.esc(s.types.map((id) => typeName(ctx, id)).join(", "))}</td>
       <td data-label="Сложность">${ctx.esc(s.difficulty)}</td>
-      <td data-label="Источник">${s.generated ? "ИИ-генерация" : "Вручную"}</td>
       <td data-label="Статус"><span class="status-pill ${s.approved ? "status-done" : "status-new"}">${s.approved ? "Утверждён" : "Ждёт подтверждения"}</span></td>
       <td data-label="">
         <button type="button" class="row-action" data-row-open data-open-scenario="${s.id}">Открыть</button>
@@ -83,7 +82,7 @@
     const approved = list.filter((s) => s.approved).length;
     const custom = D.readCustomClusterIds().indexOf(c.id) !== -1;
     const table = list.length
-      ? `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Сценарий</th><th>Тип</th><th>Сложность</th><th>Источник</th><th>Статус</th><th></th></tr></thead><tbody>${list.map((s) => scenarioRow(ctx, s)).join("")}</tbody></table></div>`
+      ? `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Сценарий</th><th>Тип</th><th>Сложность</th><th>Статус</th><th></th></tr></thead><tbody>${list.map((s) => scenarioRow(ctx, s)).join("")}</tbody></table></div>`
       : `<div class="empty-hint">В кластере пока нет сценариев.</div>`;
     return `<details class="cluster" data-cluster="${c.id}" ${openClusters.has(c.id) ? "open" : ""}>
       <summary>
@@ -241,7 +240,7 @@
     const opt = (v, label, cur) => `<option value="${ctx.esc(v)}" ${cur === v ? "selected" : ""}>${ctx.esc(label)}</option>`;
 
     $("scenario-title").textContent = s.title;
-    $("scenario-sub").textContent = (D.getCluster(s.clusterId) || { title: "Без кластера" }).title + " · " + (s.generated ? "ИИ-генерация" : "вручную") + " · " + (s.approved ? "утверждён" : "ждёт подтверждения");
+    $("scenario-sub").textContent = (D.getCluster(s.clusterId) || { title: "Без кластера" }).title + " · " + (s.approved ? "утверждён" : "ждёт подтверждения");
 
     $("scenario-body").innerHTML = `
       <div class="scenario-detail">

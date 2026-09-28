@@ -97,81 +97,8 @@
           </div>
         </div>
 
-        <div class="caller-strip" id="caller-strip">
-          <span class="caller-strip-label">Заявитель говорит</span>
-          <span class="caller-strip-who" id="caller-strip-who">—</span>
-          <p class="caller-strip-text" id="caller-strip-text">Сообщений пока нет</p>
-        </div>
-
         <div class="win-cols">
           <section class="win-col col-a">
-            <div class="chat-panel" id="chat-panel">
-              <div class="chat-head">Текстовый режим · чат с заявителем (ИИ)</div>
-              <div class="chat-log" id="chat-log"></div>
-              <div class="chat-input-row">
-                <input type="text" id="chat-input" placeholder="Задайте вопрос заявителю…" autocomplete="off" />
-                <button type="button" class="row-action" id="chat-send">Отправить</button>
-              </div>
-            </div>
-
-            <div class="form-row">
-              <div class="form-field" id="field-caller">
-                <label for="sheet-caller-input">Фамилия и имя заявителя</label>
-                <input type="text" id="sheet-caller-input" placeholder="Иванов Иван" />
-                <p class="field-error">Укажите ФИО заявителя</p>
-              </div>
-              <div class="form-field" id="field-caller-status">
-                <label for="sheet-caller-status">Статус заявителя</label>
-                <select id="sheet-caller-status">
-                  <option value="">Выберите статус…</option>
-                  <option value="Очевидец">Очевидец</option>
-                  <option value="Пострадавший">Пострадавший</option>
-                  <option value="Родственник">Родственник</option>
-                  <option value="Знакомый">Знакомый</option>
-                  <option value="Ребёнок">Ребёнок</option>
-                  <option value="Участник">Участник</option>
-                </select>
-                <p class="field-error">Укажите статус заявителя</p>
-              </div>
-            </div>
-
-            <div class="form-field" id="field-injured">
-              <label>Отметки по вызову</label>
-              <div class="flag-row">
-                <button type="button" class="flag-pill" data-flag="injured">Пострадавшие</button>
-                <button type="button" class="flag-pill" data-flag="notOnSite">Нет на месте</button>
-                <button type="button" class="flag-pill" data-flag="ambulanceRefused">Отказ от скорой</button>
-                <button type="button" class="flag-pill" data-flag="blocked">Заблокированные</button>
-                <label class="flag-pill flag-check">
-                  <input type="checkbox" id="foreign-language" /> Иностранный язык
-                </label>
-              </div>
-              <input type="number" id="injured-count" min="1" placeholder="Количество пострадавших" hidden style="margin-top:6px;" />
-            </div>
-
-            <div class="form-field grow">
-              <label for="sheet-description">Описание со слов заявителя</label>
-              <textarea id="sheet-description" maxlength="500" placeholder="Кратко опишите ситуацию"></textarea>
-              <span class="char-counter" id="description-counter">0 / 500</span>
-              <p class="field-error">Заполните описание со слов заявителя</p>
-            </div>
-          </section>
-
-          <section class="win-col col-b">
-            <div class="form-field" id="field-types">
-              <label>Что случилось</label>
-              <input type="text" id="type-search" placeholder="Введите тип происшествия для поиска…" autocomplete="off" />
-              <div class="type-tiles" id="type-tiles"></div>
-              <p class="field-error">Выберите хотя бы один тип происшествия</p>
-            </div>
-
-            <div class="form-field" id="field-survey" hidden>
-              <label>Опросная карта</label>
-              <div class="survey" id="survey"></div>
-            </div>
-          </section>
-
-          <section class="win-col col-c">
             <div class="form-field" id="field-address">
               <label for="sheet-address-input">Адрес (единая строка)</label>
               <input type="text" id="sheet-address-input" placeholder="Начните вводить адрес…" />
@@ -233,6 +160,61 @@
               </div>
             </div>
 
+            <div class="form-row">
+              <div class="form-field" id="field-caller">
+                <label for="sheet-caller-input">Фамилия и имя заявителя</label>
+                <input type="text" id="sheet-caller-input" placeholder="Иванов Иван" />
+                <p class="field-error">Укажите ФИО заявителя</p>
+              </div>
+              <div class="form-field" id="field-caller-status">
+                <label for="sheet-caller-status">Статус заявителя</label>
+                <select id="sheet-caller-status">
+                  <option value="">Выберите статус…</option>
+                  <option value="Очевидец">Очевидец</option>
+                  <option value="Пострадавший">Пострадавший</option>
+                  <option value="Родственник">Родственник</option>
+                  <option value="Знакомый">Знакомый</option>
+                  <option value="Ребёнок">Ребёнок</option>
+                  <option value="Участник">Участник</option>
+                </select>
+                <p class="field-error">Укажите статус заявителя</p>
+              </div>
+            </div>
+
+            <div class="form-field" id="field-injured">
+              <label>Отметки по вызову</label>
+              <div class="flag-row">
+                <button type="button" class="flag-pill" data-flag="injured">Пострадавшие</button>
+                <button type="button" class="flag-pill" data-flag="notOnSite">Нет на месте</button>
+                <button type="button" class="flag-pill" data-flag="ambulanceRefused">Отказ от скорой</button>
+                <button type="button" class="flag-pill" data-flag="blocked">Заблокированные</button>
+                <label class="flag-pill flag-check">
+                  <input type="checkbox" id="foreign-language" /> Иностранный язык
+                </label>
+              </div>
+              <input type="number" id="injured-count" min="1" placeholder="Количество пострадавших" hidden style="margin-top:6px;" />
+            </div>
+
+            <div class="form-field grow">
+              <label for="sheet-description">Описание со слов заявителя</label>
+              <textarea id="sheet-description" maxlength="500" placeholder="Кратко опишите ситуацию"></textarea>
+              <span class="char-counter" id="description-counter">0 / 500</span>
+              <p class="field-error">Заполните описание со слов заявителя</p>
+            </div>
+          </section>
+
+          <section class="win-col col-b">
+            <div class="form-field" id="field-types">
+              <label>Что случилось</label>
+              <input type="text" id="type-search" placeholder="Введите тип происшествия для поиска…" autocomplete="off" />
+              <div class="type-tiles" id="type-tiles"></div>
+              <p class="field-error">Выберите хотя бы один тип происшествия</p>
+            </div>
+
+            <div class="form-field" id="field-survey" hidden>
+              <label>Опросная карта</label>
+              <div class="survey" id="survey"></div>
+            </div>
             <div class="sheet-services">
               <h3>Службы к оповещению</h3>
               <p class="sheet-services-hint" id="sheet-services-hint">Определяются автоматически после выбора типа происшествия.</p>
@@ -242,6 +224,10 @@
                 <button type="button" class="row-action" id="service-add-btn">Добавить</button>
               </div>
             </div>
+          </section>
+
+          <section class="win-col col-c phone-dock" id="phone-dock">
+            <p class="empty-hint">Телефония не подключена</p>
           </section>
         </div>
       </div>
@@ -315,10 +301,6 @@
             <div class="sheet-services">
               <h3>Службы к оповещению</h3>
               <div class="service-chips" id="review-services"></div>
-            </div>
-            <div class="form-field">
-              <label>Переписка с заявителем</label>
-              <div class="chat-log readonly" id="review-chat"></div>
             </div>
           </section>
 
