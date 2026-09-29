@@ -1,0 +1,31 @@
+# Изменился демо-ролик (media/demo/**) — просим сайт N1ck6/112-Helper-site пересобраться.
+# Секрет SITE_DISPATCH_TOKEN: fine-grained токен только на репозиторий 112-Helper-site
+# с правом «Contents: Read and write» (так требует repository_dispatch). Как создать — README сайта.
+name: Обновить сайт
+
+on:
+  push:
+    branches: [main]
+    paths: ["media/demo/**"]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: repository_dispatch → 112-Helper-site
+        env:
+          TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::Секрет SITE_DISPATCH_TOKEN не задан — сайт не пересобран"
+            exit 0
+          fi
+          curl -fsS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/N1ck6/112-Helper-site/dispatches \
+            -d '{"event_type":"demo-updated","client_payload":{"sha":"${{ github.sha }}"}}'
