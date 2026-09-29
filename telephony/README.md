@@ -16,15 +16,14 @@ docker compose ps          # все сервисы healthy
 
 В полном стенде собеседникам отвечает ML-сервис (`ml:8000/dialogue/turn`), события звонков
 уходят в Backend (`api:8000/api/v1/telephony/events`), а Backend сам поднимает входящий 112 на
-рабочее место при выдаче карточки ([API.md §6–7](API.md)). Заглушка `mocks` там не запускается.
+рабочее место при выдаче карточки с содержанием этой карточки ([API.md §6–7](API.md)).
 
 - АРМ: http://localhost:8080 (с другого ПК — `http://<IP>:8080`), телефония на том же адресе:
   `/telephony/` (API, события), `/recordings/` (записи) — [deploy/nginx/default.conf](../deploy/nginx/default.conf).
 - `.env` не обязателен. Для класса/демо: `cp telephony/.env.example telephony/.env`, сменить пароли.
 - Первый старт скачивает модели STT/TTS (~0.6 ГБ, нужен интернет один раз, voice-service
   `starting` до ~10 мин). Нет интернета — работают заглушки (`/health` → `degraded`).
-- Только телефония (с заглушками ML/Backend): `cd telephony && docker compose up -d`
-  (не одновременно со стендом из корня).
+- Телефония запускается только в составе полного стенда: ей нужны ML (реплики) и Backend (события).
 - После правки `asterisk/conf/*` — `docker compose restart asterisk` (конфиги рендерятся при старте).
 
 ## Звонки
@@ -53,13 +52,13 @@ docker compose ps          # все сервисы healthy
 | 600 | эхо-тест (проверка микрофона) | — |
 | другой | «Набранный номер не обслуживается» | — |
 
-Как отвечают собеседники (ML-сервис, правила — [ml/integration/dialogue.py](../ml/integration/dialogue.py);
-тот же эталон в заглушке [mocks/ml_dialogue.py](mocks/ml_dialogue.py)):
+Как отвечают собеседники (ML-сервис, правила — [ml/integration/dialogue.py](../ml/integration/dialogue.py)):
 служба — «<должность> <фамилия>, слушаю вас», без адреса из карточки в докладе один раз
 переспросит адрес, затем «информация принята…»; заявитель при перезвоне ждёт «112 / звонили /
 вызов», иначе «Кто это?»; заявитель 112 выдаёт факты по ключевым словам вопросов
-([mocks/scenarios](mocks/scenarios)). Молчание — «Алло?», дважды — отбой. `DIALOGUE_ENGINE=llm` —
-свободный диалог через LLM, при сбое — правила.
+([ml/data/dialogue_scenarios](../ml/data/dialogue_scenarios)); вызов 112 по карточке занятия — факты
+этой карточки. Молчание — «Алло?», дважды — отбой. `DIALOGUE_ENGINE=llm` — свободный диалог через
+локальную Qwen, при сбое — правила.
 
 Каждый звонок: запись WAV обоих голосов, расшифровка, события в Backend и в браузер (SSE),
 связь с рабочим местом, сессией и карточкой; в АРМ — **отработка** в карточке (служба, номер,
@@ -98,7 +97,6 @@ API: http://localhost:8092/health (`ml`, `voice_service`, `ami`), `/numbers`, `/
 | `virtual-caller` | 8092 (FastAGI 4573 внутри) | голосовой цикл, API звонков, события, справочник служб |
 | `voice-service` | 8091 | STT faster-whisper / TTS Piper (2 голоса, кэш фраз), сменные движки |
 | `audio-tools` | 8090 | записи: список, прослушивание, MP3 |
-| `mocks` | 8093 | заглушки ML (`/ml`) и Backend (`/backend`): автономный стенд и профиль `mocks` |
 | `frontend` (корневой compose) | 8080 | nginx: АРМ + прокси телефонии, Backend и ML |
 
 Данные хоста: `data/recordings/` (WAV), `data/sessions/sessions.log` (события), `data/tts/` (синтез),
@@ -115,13 +113,12 @@ telephony/
 │   ├── directory.json      справочник служб: номер, должность, пол голоса, текст ответа
 │   └── caller/             dialogue.py (цикл), api.py (HTTP + SSE, набор номера), agi.py, ami.py, calls.py
 ├── voice_service/voice/    stt/, tts/ (движки), models.py (загрузка моделей), server.py, textnorm.py
-├── mocks/                  mock_services.py (HTTP), ml_dialogue.py (правила + LLM), scenarios/
 ├── audio_tools/            MP3, список и раздача записей
 └── demo/demo_calls.py      тестовые звонки
 ```
 
 Добавить службу — объект в `directory.json` (номер 2XXX). Сценарий 112 — JSON в
-`ml/data/dialogue_scenarios/` и копия в `mocks/scenarios/`, строка в `extensions.conf`.
+`ml/data/dialogue_scenarios/` и строка в `extensions.conf`.
 Движок STT/TTS — класс + строка в фабрике.
 LLM для реплик — `DIALOGUE_ENGINE=llm`, `DIALOGUE_LLM_MODEL` в корневом `.env` ([API.md §3](API.md)).
 Подключение к ML/Backend — [API.md §6](API.md).
@@ -143,7 +140,7 @@ LLM для реплик — `DIALOGUE_ENGINE=llm`, `DIALOGUE_LLM_MODEL` в ко�
 ## Проблемы и решения
 
 - **Собеседник молчит / звонок кончается через ~8 с** — не отвечает ML (`/health` → `"ml": false`):
-  `docker compose ps ml` (автономно — `mocks`), адрес `ML_API_URL`. Собеседник говорит «техническая неполадка».
+  `docker compose ps ml`, адрес `ML_API_URL`. Собеседник говорит «техническая неполадка».
 - **Событий звонка нет в журнале Backend** — в логе virtual-caller «не доставлено в Backend»: `401/403` —
   разные `TELEPHONY_WEBHOOK_TOKEN`; `409` — `lesson_id`/`attempt_id` не из этого Backend.
 - **Пустой АРМ / ошибки `null` в консоли после обновления frontend** — старые js/css из кэша браузера;

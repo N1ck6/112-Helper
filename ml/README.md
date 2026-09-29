@@ -173,10 +173,17 @@ data/processed/classification_review.json
 * POST /dialogue/turn — реплики виртуальных собеседников в звонках (контракт telephony/API.md §3):
   правила по типу звонка или локальная LLM (DIALOGUE_ENGINE=llm, модель DIALOGUE_LLM_MODEL);
   сценарии голосовых вызовов 112 — data/dialogue_scenarios/;
-* POST /api/v1/generate/scenarios — генерация сценариев для Backend по классификатору (generate_scenario);
-* POST /api/v1/evaluate/attempt — оценка ответа обучающегося по сценарию ML (evaluate_answer);
+* POST /api/v1/generate/scenarios — генерация сценариев для Backend по классификатору (generate_scenario)
+  с полным эталоном карточки: тип ЕКП, реальный адрес Москвы, ФИО и АОН заявителя, пострадавшие,
+  рассказ заявителя от первого лица (пишет LLM, без неё — шаблон);
+* POST /api/v1/evaluate/attempt — оценка свободного текстового ответа по сценарию ML (evaluate_answer);
+  карточку АРМ-112 с полями оценивает Backend (501);
+* POST /api/v1/analyze/grammar, POST /api/v1/recommendations — грамотность текста и рекомендации (LLM);
+* GET /incident-types?q= — поиск по классификатору для поля «Что случилось?» в АРМ;
 * остальные методы контракта Backend (backend/docs/INTEGRATION.md §1) отвечают 501 —
   Backend считает их своими правилами, пока они не реализованы здесь.
+
+Модель по умолчанию — qwen3:4b-instruct (переменная LLM_MODEL): без рассуждений вслух, ~3 с на ответ на CPU.
 
 В полном стенде (корневой docker-compose.yml) сервис доступен как http://ml:8000,
 Ollama — http://ollama:11434 (профиль llm).

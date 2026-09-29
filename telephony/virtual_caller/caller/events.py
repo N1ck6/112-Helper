@@ -6,7 +6,7 @@ sessions.log пишется всегда и первым — это журнал
 упавший Backend не тормозил голосовой цикл.
 
 Формат доставки (BACKEND_EVENTS_FORMAT):
-  raw     — событие как в SSE (call.started, call.utterance…), для заглушки mocks;
+  raw     — событие как в SSE (call.started, call.utterance…), для отладки;
   backend — контракт backend/docs/INTEGRATION.md §2.2: только смена статуса вызова
             (ringing / answered / missed / ended / failed), id занятия и попытки,
             длительность, запись; остальное — в meta. Заголовок X-Telephony-Token.

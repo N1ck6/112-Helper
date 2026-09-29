@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_SESSIONS: int = 20
     REPORT_TIMEOUT_SECONDS: int = 30  # п.2.8: аналитический отчёт ≤30 сек
     CARD_ACTION_WORK_LIMIT_SECONDS: int = 180
+    #: Режим 112: брошенная карточка закрывается через столько секунд (норматив — только для оценки)
+    CARD_FILL_HARD_LIMIT_SECONDS: int = 600
     CARD_STREAM_WINDOW: int = 3
     #: Пауза между появлением новых карточек в потоке, секунд.
     CARD_STREAM_INTERVAL_SECONDS: int = 20

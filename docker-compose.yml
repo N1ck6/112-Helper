@@ -13,16 +13,14 @@
 #       └─/telephony/────> virtual-caller ─/dialogue/turn─> ml ─(profile llm)─> ollama
 #                              └─ события звонка ─> api /api/v1/telephony/events (X-Telephony-Token)
 #
-# Каждая роль держит свой Dockerfile в своей папке; телефония подключается через include
-# (её compose автономен, deploy/telephony.integration.yml переключает её с заглушек на ML/Backend).
+# Каждая роль держит свой Dockerfile в своей папке; сервисы телефонии — в telephony/docker-compose.yml
+# (подключается через include).
 # Настройки — .env рядом с этим файлом (шаблон .env.example) и telephony/.env. Оба необязательны,
 # но пароли и SECRET_KEY для эксплуатации нужно задать.
 # Не запускать одновременно с `docker compose up` из telephony/ (те же имена контейнеров).
 
 include:
-  - path:
-      - telephony/docker-compose.yml
-      - deploy/telephony.integration.yml
+  - path: telephony/docker-compose.yml
 
 services:
   # ------------------------------------------------------------------ Frontend
@@ -62,6 +60,36 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+
+  # Резервные копии БД (ТЗ: резервное копирование): pg_dump той же версии, что PostgreSQL,
+  # раз в BACKUP_INTERVAL_HOURS в ./data/backups, хранится BACKUP_KEEP последних.
+  # Восстановление: docker compose exec -T postgres pg_restore -U dds112 -d dds112 --clean < data/backups/<файл>.dump
+  backup:
+    image: postgres:16-alpine
+    container_name: trainer-backup
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-dds112}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-dds112}
+      PGDATABASE: ${POSTGRES_DB:-dds112}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+    volumes:
+      - ./data/backups:/backups
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          f=/backups/dds112_$$(date +%Y%m%d_%H%M%S).dump
+          pg_dump -Fc -f "$$f" && echo "копия $$f"
+          ls -1t /backups/*.dump 2>/dev/null | tail -n +$$((BACKUP_KEEP + 1)) | xargs -r rm -f
+          sleep $$((BACKUP_INTERVAL_HOURS * 3600))
+        done
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   api:

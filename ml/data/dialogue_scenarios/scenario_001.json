@@ -3,7 +3,7 @@
   "title": "Пожар в квартире",
   "gender": "female",
   "incident_type": "Пожар в жилом доме",
-  "_comment": "Сценарий голосового вызова 112 (номера 700/701) для /dialogue/turn. Копия telephony/mocks/scenarios — менять вместе.",
+  "_comment": "Сценарий голосового вызова 112 (номера 700/701) для /dialogue/turn. Номер и сценарий — telephony/asterisk/conf/extensions.conf.",
   "opening": "Алло! Помогите, у меня в квартире пожар!",
   "facts": [
     {"id": "address", "keywords": ["адрес", "где", "улиц", "куда"],

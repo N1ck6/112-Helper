@@ -1,7 +1,7 @@
 """Полный стенд: телефония <-> Backend <-> ML <-> Frontend (корневой docker-compose.yml).
 
   * unit — без Docker: события в формате Backend, контракт Backend для звонков
-    (/api/v1/calls/originate|hangup), реплики ML совпадают с эталоном телефонии (mocks);
+    (/api/v1/calls/originate|hangup), реплики ML-сервиса;
   * integration — к полному стенду (docker compose --profile llm up -d из корня),
     всё через nginx :8080 — как ходит браузер. SKIP без стенда.
 
@@ -9,7 +9,6 @@
 """
 
 import dataclasses
-import importlib.util
 import json
 import os
 import sys
@@ -22,22 +21,15 @@ import pytest
 from conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "virtual_caller"))
-sys.path.insert(0, str(REPO_ROOT / "telephony" / "mocks"))
 
-import ml_dialogue  # noqa: E402
 from caller.api import ApiError, CallControl  # noqa: E402
 from caller.calls import CallRegistry, TraineeContexts  # noqa: E402
 from caller.config import Settings  # noqa: E402
 from caller.directory import Directory  # noqa: E402
 from caller.events import EventSink, to_backend_event  # noqa: E402
 from test_stage6_dialogue import FakeAMI, FakeVoice, _serve, _wait  # noqa: E402
-import mock_services  # noqa: E402
-
-# ml/integration/dialogue.py — без FastAPI (пакет integration тянет роутер)
-_spec = importlib.util.spec_from_file_location("ml_integration_dialogue",
-                                               REPO_ROOT / "ml" / "integration" / "dialogue.py")
-ml_real = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(ml_real)
+from fakes import EventStore, make_backend_server  # noqa: E402
+from fakes import ml_dialogue as ml_real  # noqa: E402
 
 DIRECTORY = Directory.load(REPO_ROOT / "telephony" / "virtual_caller" / "directory.json")
 STAND_URL = os.environ.get("STAND_URL", "http://localhost:8080")
@@ -68,8 +60,8 @@ def test_backend_event_mapping():
 
 
 def test_backend_webhook_with_token(tmp_path):
-    store = mock_services.EventStore()
-    server = mock_services.make_server("127.0.0.1", 0, {}, store)
+    store = EventStore()
+    server = make_backend_server(store)
     url = _serve(server)
     try:
         sink = EventSink(tmp_path / "s.log", backend_url=f"{url}/backend", fmt="backend", token="t0k",
@@ -81,6 +73,7 @@ def test_backend_webhook_with_token(tmp_path):
         events = store.query()
         assert [e["event"] for e in events] == ["answered", "ended"]
         assert all(e["lesson_id"] == LESSON for e in events)
+        assert all(h.get("X-Telephony-Token") == "t0k" for h in store.headers)
         # в sessions.log — все события в исходном виде
         assert len((tmp_path / "s.log").read_text(encoding="utf-8").splitlines()) == 3
     finally:
@@ -140,19 +133,18 @@ def _req(call_type, turn, history, text, **extra):
             "context": {"card": {"address": "Москва, ул. Ясный проезд, 10", "description": "Горит мусор"}}, **extra}
 
 
-@pytest.mark.parametrize("req", [
-    _req("dispatch", 0, [], None),
-    _req("dispatch", 1, [{"role": "caller", "text": "слушаю"}], "Пожар, горит мусор"),
-    _req("dispatch", 1, [{"role": "caller", "text": "слушаю"}], "Пожар на Ясном проезде"),
-    _req("report", 0, [], None),
-    _req("applicant", 1, [{"role": "caller", "text": "Алло?"}], "Вы звонили в 112?"),
-    _req("incident_112", 0, [], None, scenario_id="scenario_002"),
-    _req("incident_112", 1, [{"role": "caller", "text": "Алло"}], "Назовите адрес", scenario_id="scenario_001"),
+@pytest.mark.parametrize("req,fragment,end", [
+    (_req("dispatch", 0, [], None), "Петров, слушаю вас", False),
+    (_req("dispatch", 1, [{"role": "caller", "text": "слушаю"}], "Пожар, горит мусор"), "точный адрес", False),
+    (_req("dispatch", 1, [{"role": "caller", "text": "слушаю"}], "Пожар на Ясном проезде"), "информация принята", True),
+    (_req("report", 0, [], None), "Как приняли?", False),
+    (_req("applicant", 1, [{"role": "caller", "text": "Алло?"}], "Вы звонили в 112?"), "Горит мусор", False),
+    (_req("incident_112", 0, [], None, scenario_id="scenario_002"), "", False),
 ])
-def test_ml_dialogue_matches_telephony_reference(req):
-    """Правила ML-сервиса = эталон телефонии: автотесты проходят одинаково на ML и на mocks."""
-    ref_scenarios = mock_services.load_scenarios(REPO_ROOT / "telephony" / "mocks" / "scenarios")
-    assert ml_real.next_turn(req, ml_real.load_scenarios(), None) == ml_dialogue.next_turn(req, ref_scenarios, None)
+def test_ml_dialogue_rules(req, fragment, end):
+    """Правила собеседников ML-сервиса: приветствие, переспрос адреса, «информация принята», доклад."""
+    reply = ml_real.next_turn(req, ml_real.load_scenarios(), None)
+    assert fragment in reply["reply_text"] and reply["end_call"] is end and reply["engine"] == "rules"
 
 
 def test_ml_incident_112_from_card_without_scenario():

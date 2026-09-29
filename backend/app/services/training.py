@@ -586,7 +586,11 @@ class TrainingService:
             attempt.work_deadline_at = attempt.issued_at + _seconds(work_limit)
             attempt.deadline_at = attempt.issued_at + _seconds(max(work_limit, norm_seconds))
         else:
-            attempt.deadline_at = attempt.issued_at + _seconds(norm_seconds)
+            #: Норматив заполнения (norm_seconds) штрафует за перерасход при оценке, но карточку
+            #: не отнимает: оператор ещё говорит с заявителем. Сама закрывается только брошенная.
+            attempt.deadline_at = attempt.issued_at + _seconds(
+                max(norm_seconds, settings.CARD_FILL_HARD_LIMIT_SECONDS)
+            )
         attempt.notification_list = list(card.notification_list or [])
         attempt.service_code = self._student_service(lesson, attempt.notification_list)
         attempt.response_statuses = []
@@ -807,6 +811,11 @@ class TrainingService:
             "operator_text": data.get("operator_text"),
         }
         return await get_ml_client().dialogue_turn(payload)
+
+    async def attempt_with_card(self, attempt_id: uuid.UUID, actor: User) -> dict[str, Any]:
+        """Попытка с карточкой по тем же правилам видимости, что при выдаче (в режиме 112 карточка скрыта)."""
+        attempt = await self.get_attempt(attempt_id, actor)
+        return await self._attempt_view(attempt)
 
     async def get_attempt(self, attempt_id: uuid.UUID, actor: User) -> CardAttempt:
         attempt = await self.attempts.get_or_fail(attempt_id, "Попытка не найдена")
@@ -1455,7 +1464,9 @@ class TrainingService:
             visible_card = visible_card.model_copy(
                 update={
                     "payload": {},
-                    "caller_profile": {},
+                    #: АОН определяется автоматически при приёме вызова — его оператор видит сразу
+                    "caller_profile": {"phone": (card.expected_payload or {}).get("aon_phone")
+                                       or (card.caller_profile or {}).get("phone")},
                     "notification_list": [],
                     "title": f"Входящий вызов, карточка {card.card_no}",
                 }

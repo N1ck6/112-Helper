@@ -26,7 +26,7 @@ class Settings:
     voice_service_url: str
     ml_api_url: str
     backend_url: str
-    # Формат событий для BACKEND_URL: raw — как в SSE (заглушка mocks), backend — контракт
+    # Формат событий для BACKEND_URL: raw — как в SSE, backend — контракт
     # backend/docs/INTEGRATION.md §2.2 (ringing/answered/ended…) с заголовком X-Telephony-Token
     backend_events_format: str
     backend_token: str
@@ -71,9 +71,9 @@ class Settings:
             api_host=_env("API_HOST", "0.0.0.0"),
             api_port=int(_env("API_PORT", "8092")),
             voice_service_url=_url("VOICE_SERVICE_URL", "http://voice-service:8091"),
-            ml_api_url=_url("ML_API_URL", "http://mocks:8093/ml"),
+            ml_api_url=_url("ML_API_URL", "http://ml:8000"),
             backend_url=os.environ.get("BACKEND_URL", "").strip().rstrip("/"),
-            backend_events_format=_env("BACKEND_EVENTS_FORMAT", "raw").lower(),
+            backend_events_format=_env("BACKEND_EVENTS_FORMAT", "backend").lower(),
             backend_token=_env("TELEPHONY_WEBHOOK_TOKEN", ""),
             http_timeout_sec=float(_env("HTTP_TIMEOUT_SEC", "30")),
             ami_host=_env("AMI_HOST", "asterisk"),

@@ -22,11 +22,10 @@ import pytest
 from conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "virtual_caller"))
-sys.path.insert(0, str(REPO_ROOT / "telephony" / "mocks"))
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "voice_service"))
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "demo"))
 
-import ml_dialogue  # noqa: E402
+from fakes import ml_dialogue  # noqa: E402
 from caller.calls import CallRegistry, TraineeContexts  # noqa: E402
 from caller.directory import Directory  # noqa: E402
 from caller.events import EventSink  # noqa: E402

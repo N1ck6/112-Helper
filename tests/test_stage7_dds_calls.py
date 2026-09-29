@@ -2,7 +2,7 @@
 заявителю (applicant); справочник служб; LLM-адаптер ML; API для frontend.
 
   * unit — без Docker;
-  * integration — к стенду (cd telephony && docker compose up -d, COMPOSE_PROFILES=mocks):
+  * integration — к полному стенду (docker compose --profile llm up -d из корня):
     фразы диспетчера синтезируются голосом Irina в /tts/operator_9XXX.wav и
     проигрываются имитацией рабочего места Local/9XXX@autotest. SKIP без стенда.
 
@@ -25,10 +25,9 @@ import pytest
 from conftest import RECORDINGS_DIR, REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "virtual_caller"))
-sys.path.insert(0, str(REPO_ROOT / "telephony" / "mocks"))
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "demo"))
 
-import ml_dialogue  # noqa: E402
+from fakes import ml_dialogue  # noqa: E402
 from caller.api import CallControl, make_api_server  # noqa: E402
 from caller.calls import CallRegistry, TraineeContexts  # noqa: E402
 from caller.config import Settings  # noqa: E402
@@ -42,7 +41,6 @@ CARD = {"id": "913126", "title": "Пожар: мусор на улице", "addr
         "caller": "Александр А., очевидец", "description": "Горит мусор у контейнерной площадки",
         "services": ["Служба 101 (МЧС)", "ОДС ПСЦ", "Упр. района"]}
 CALL_API_URL = os.environ.get("CALL_API_URL", "http://localhost:8092")
-MOCKS_URL = os.environ.get("MOCKS_URL", "http://localhost:8093")
 VOICE_URL = os.environ.get("VOICE_SERVICE_URL", "http://localhost:8091")
 
 
@@ -353,10 +351,9 @@ sys_demo = None
 def stand():
     try:
         status, health = _http("GET", f"{CALL_API_URL}/health", timeout=5)
-        mocks_status, _ = _http("GET", f"{MOCKS_URL}/health", timeout=5)
     except OSError as exc:
-        pytest.skip(f"стенд не запущен ({exc}): cd telephony && docker compose up -d (COMPOSE_PROFILES=mocks)")
-    if status != 200 or mocks_status != 200:
+        pytest.skip(f"стенд не запущен ({exc}): docker compose --profile llm up -d")
+    if status != 200:
         pytest.fail(f"стенд не готов: {health}")
     import demo_calls  # telephony/demo — подготовка фраз диспетчера голосом Irina
     demo_calls.prepare_operator_phrases(VOICE_URL)

@@ -111,6 +111,15 @@ async def dialogue_turn(
     return await TrainingService(session).dialogue_turn(attempt_id, data, student)
 
 
+@router.get(
+    "/attempts/{attempt_id}/card",
+    response_model=AttemptWithCard,
+    summary="Попытка с карточкой (для просмотра из списка происшествий)",
+)
+async def attempt_card(attempt_id: uuid.UUID, session: SessionDep, user: CurrentUser) -> AttemptWithCard:
+    return AttemptWithCard.model_validate(await TrainingService(session).attempt_with_card(attempt_id, user))
+
+
 @router.get("/attempts/{attempt_id}", response_model=AttemptRead, summary="Данные попытки")
 async def get_attempt(attempt_id: uuid.UUID, session: SessionDep, user: CurrentUser) -> AttemptRead:
     attempt = await TrainingService(session).get_attempt(attempt_id, user)

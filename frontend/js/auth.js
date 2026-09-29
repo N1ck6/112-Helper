@@ -50,10 +50,13 @@
   requestAnimationFrame(() => moveIndicatorTo(document.querySelector(".role-btn.active")));
   window.addEventListener("resize", () => moveIndicatorTo(document.querySelector(".role-btn.active")));
 
+  const ON_STAND = !!(window.APP_CONFIG || {}).ON_STAND;
   API.probe().then((ok) => {
     modeEl.textContent = ok
       ? "Backend подключён: вход проверяется на сервере"
-      : `Backend недоступен — демо-режим: пароль не проверяется (введите любой от ${MIN_DEMO_PASSWORD} символов)`;
+      : ON_STAND
+        ? "Сервер тренажёра недоступен — вход невозможен. Проверьте, что стенд запущен (docker compose ps)."
+        : `Backend недоступен — демо-режим: пароль не проверяется (введите любой от ${MIN_DEMO_PASSWORD} символов)`;
     modeEl.classList.toggle("is-online", !!ok);
   });
 
@@ -97,6 +100,7 @@
     } catch (err) {
       throw new Error(err.message || "Неверный логин или пароль");
     }
+    if (!remote && ON_STAND) throw new Error("Сервер тренажёра недоступен, попробуйте через минуту");
     if (remote) {
       return Object.assign({ role: payload.role, fullName: payload.username, workstation: payload.workstation }, remote, { mode: "backend", loggedInAt: new Date().toISOString() });
     }

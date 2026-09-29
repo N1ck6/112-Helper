@@ -19,9 +19,8 @@
 | virtual-caller — API звонков, SSE | 8092 | Frontend, Backend |
 | voice-service — STT/TTS | 8091 | virtual-caller |
 | audio-tools — записи | 8090 | Frontend/Backend (проиграть или скачать запись) |
-| mocks — заглушки ML (`/ml`) и Backend (`/backend`) | 8093 | только автономный стенд `telephony/` и профиль `mocks` |
 
-В полном стенде (корневой `docker-compose.yml`) телефония работает с настоящими сервисами:
+Телефония работает в составе полного стенда (корневой `docker-compose.yml`) с сервисами команды:
 ML — `http://ml:8000` (`/dialogue/turn`), Backend — `http://api:8000/api/v1` (события в его формате, п. 2.1),
 а Backend поднимает звонки по своему контракту (п. 7). Браузер ходит через nginx: `/telephony/…`.
 
@@ -206,14 +205,14 @@ Backend принимает только смену статуса вызова (
 ```
 `lesson_id` / `attempt_id` / `student_id` есть, только если звонок поднял Backend (п. 7): он передал их
 в запросе, телефония возвращает их в каждом событии. `sip_call_id` = `call_id` телефонии.
-По умолчанию (`raw`) события уходят в исходном виде — так их принимает заглушка `mocks`.
+`BACKEND_EVENTS_FORMAT=raw` — события в исходном виде (для отладки).
 
 ---
 
 ## 3. ML: реплика собеседника
 
-`POST {ML_API_URL}/dialogue/turn` на каждом шаге. Реализация — ML-сервис (`ml/integration/dialogue.py`),
-заглушка `mocks/ml_dialogue.py` — эталон правил для автономной разработки (тесты сверяют их ответы). API **без состояния**: вся история в запросе.
+`POST {ML_API_URL}/dialogue/turn` на каждом шаге. Реализация — ML-сервис (`ml/integration/dialogue.py`).
+API **без состояния**: вся история в запросе.
 
 ```json
 {
@@ -248,9 +247,8 @@ DIALOGUE_LLM_MODEL=qwen3:4b-instruct   # Ollama стенда (профиль llm
 LLM_TIMEOUT_SEC=20
 ```
 Нужна instruct-модель: `qwen3:4b` рассуждает вслух (ответ 10+ с, без готовой реплики). Любой другой
-OpenAI-совместимый сервер — `LLM_API_URL=http://…/v1`, `LLM_API_KEY`. В заглушке `mocks` — те же
-`DIALOGUE_ENGINE`, `LLM_API_URL`, `LLM_MODEL`. При недоступности LLM ответ по правилам
-(`engine: rules-fallback`), звонок не срывается.
+OpenAI-совместимый сервер — `LLM_API_URL=http://…/v1`, `LLM_API_KEY`. При недоступности LLM ответ
+по правилам (`engine: rules-fallback`), звонок не срывается.
 
 ---
 
@@ -320,18 +318,16 @@ es.addEventListener("call.failed",    e => toast("Не дозвонились: "
 ```
 Входящий доклад старшего (`report`) придёт тем же потоком (`call.dialing` с `call_type: "report"`).
 
-## 6. Подключение настоящих ML и Backend
+## 6. Связь с ML и Backend
 
-Уже сделано в полном стенде: корневой `docker-compose.yml` подключает `telephony/docker-compose.yml`
-вместе с надстройкой `deploy/telephony.integration.yml`:
+Значения по умолчанию в `telephony/docker-compose.yml` (корневой compose подключает его через include):
 ```env
 ML_API_URL=http://ml:8000                  # телефония добавит /dialogue/turn
 BACKEND_URL=http://api:8000/api/v1         # телефония добавит /telephony/events
 BACKEND_EVENTS_FORMAT=backend              # контракт Backend (п. 2.1)
 TELEPHONY_WEBHOOK_TOKEN=…                  # тот же, что у Backend
 ```
-Сервис `mocks` там в профиле `mocks` (не запускается). Автономно (`cd telephony && docker compose up -d`)
-телефония по-прежнему работает с заглушками. Проверка: `GET /telephony/health` → `"ml": true, "backend": true`;
+Проверка: `GET /telephony/health` → `"ml": true, "backend": true`;
 `pytest tests/test_stage9_integration.py`.
 
 ## 7. Контракт Backend: звонки занятия

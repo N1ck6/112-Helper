@@ -4,6 +4,7 @@
 
     POST /dialogue/turn                 реплика виртуального собеседника (telephony/API.md §3)
     GET  /dialogue/health               движок реплик и сценарии 112
+    GET  /incident-types?q=             поиск по классификатору происшествий (поле «Что случилось?»)
     POST /api/v1/generate/scenarios     генерация сценариев по классификатору (backend INTEGRATION.md §1)
     POST /api/v1/evaluate/attempt       оценка ответа по сценарию ML
     POST /api/v1/analyze/grammar        проверка грамотности текста — локальная LLM
@@ -62,6 +63,24 @@ def build_router(classifier_data: Any, classify: Callable[[str], Dict[str, Any]]
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    incidents = [i for i in (classifier_data.get("incidents") or []) if i.get("incident_type")]
+
+    @router.get("/incident-types")
+    def incident_types(q: str = "", limit: int = 20):
+        """Поиск по классификатору происшествий (поле «Что случилось?» АРМ): все слова запроса
+        как части слов в типе, типе ЕКП-35, группе или категории — как поиск «пож», «тран» в АРМ-112."""
+        words = [w for w in q.lower().split() if w]
+        found = []
+        for inc in incidents:
+            hay = " ".join(str(inc.get(k) or "") for k in ("incident_type", "ekp35_type", "group", "category")).lower()
+            if all(w in hay for w in words):
+                found.append({"number": inc.get("number"), "incident_type": inc.get("incident_type"),
+                              "category": inc.get("category"), "group": inc.get("group"),
+                              "main_service": inc.get("main_service")})
+                if len(found) >= max(1, min(limit, 50)):
+                    break
+        return found
 
     @router.post("/api/v1/analyze/grammar")
     def check_grammar(payload: Dict[str, Any] = Body(...)):

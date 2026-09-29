@@ -53,7 +53,8 @@ async def test_full_lesson_cycle(
     assert payload["seconds_left"] is not None
     assert payload["template_fields"], "Должна прийти схема полей карточки АРМ-112"
     assert payload["card"]["payload"] == {}
-    assert payload["card"]["caller_profile"] == {}
+    #: Из профиля заявителя оператор видит только АОН — номер определяется автоматически
+    assert set(payload["card"]["caller_profile"]) == {"phone"}
     assert payload["card"]["notification_list"] == []
 
     #: Преподаватель видит и эталон, и список оповещения по ЕКП.

@@ -3,7 +3,7 @@
   "title": "ДТП с пострадавшими",
   "gender": "male",
   "incident_type": "ДТП с пострадавшими",
-  "_comment": "Сценарий голосового вызова 112 (номера 700/701) для /dialogue/turn. Копия telephony/mocks/scenarios — менять вместе.",
+  "_comment": "Сценарий голосового вызова 112 (номера 700/701) для /dialogue/turn. Номер и сценарий — telephony/asterisk/conf/extensions.conf.",
   "opening": "Здравствуйте, тут авария на перекрёстке, человек пострадал!",
   "facts": [
     {"id": "address", "keywords": ["адрес", "где", "улиц", "перекрёст", "перекрест", "куда"],

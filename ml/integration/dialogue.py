@@ -15,8 +15,8 @@
             OpenAI-совместимый сервер (LLM_API_URL). Если LLM недоступна, не уложилась в
             LLM_TIMEOUT_SEC или ответила пусто — ответ по правилам: звонок не срывается.
 
-Правила совпадают с эталоном телефонии (telephony/mocks/ml_dialogue.py), чтобы автотесты
-телефонии проходили одинаково на заглушке и на ML-сервисе.
+Правила — сценарий разговора по памятке «Работа на АРМ-112»: собеседник переспрашивает адрес,
+подтверждает «информация принята», заявитель 112 отвечает фактами сценария или карточки.
 """
 
 import json
@@ -304,7 +304,7 @@ class LLMConfig:
         """
         if os.environ.get("DIALOGUE_ENGINE", "rules").strip().lower() != "llm":
             return None
-        model = os.environ.get("DIALOGUE_LLM_MODEL") or os.environ.get("LLM_MODEL", "qwen3:4b")
+        model = os.environ.get("DIALOGUE_LLM_MODEL") or os.environ.get("LLM_MODEL", "qwen3:4b-instruct")
         timeout = float(os.environ.get("LLM_TIMEOUT_SEC", "20"))
         url = os.environ.get("LLM_API_URL", "").strip().rstrip("/")
         if url:

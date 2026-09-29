@@ -17,7 +17,8 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-STUB_MODEL_NAME = "stub-rules-v1"
+#: Правила регламента АРМ-112 (не заглушка: этими правилами backend оценивает всё, что не умеет ML)
+STUB_MODEL_NAME = "rules-arm112-v1"
 
 
 class MLClient(Protocol):
@@ -469,6 +470,19 @@ class StubMLClient:
                     }
                 )
                 continue
+            if field in FREE_TEXT_FIELDS:
+                #: Свободный текст (описание со слов заявителя) не сверяется дословно: важно,
+                #: передана ли суть — доля значимых слов эталона, найденных в ответе.
+                ratio = _keyword_share(actual, reference_value)
+                if ratio >= 0.4:
+                    matched += field_weight
+                else:
+                    errors.append({
+                        "category": "completeness", "severity": "minor", "code": "description_incomplete",
+                        "message": f"В поле «{_field_label(field)}» не хватает сути со слов заявителя",
+                        "field_code": field, "expected": reference_value, "actual": actual, "penalty": 4.0,
+                    })
+                continue
             ratio = _similarity(_normalize(actual), _normalize(reference_value))
             if ratio >= 0.8 and not is_address:
                 matched += field_weight
@@ -507,7 +521,12 @@ class StubMLClient:
 
         # 3. Регламент: последовательность действий.
         expected_actions = payload.get("expected_actions") or EXPECTED_ACTION_SEQUENCE
-        procedure_score = _sequence_score(actions, expected_actions)
+        #: Блоки карточки можно заполнять в любом порядке (инструкция «Заведение карточки», п.4):
+        #: «тип» и «адрес» засчитываются в любой очерёдности, важны приём вызова первым и сохранение последним.
+        swapped = [
+            {"field_filled": "classified", "classified": "field_filled"}.get(a, a) for a in expected_actions
+        ]
+        procedure_score = max(_sequence_score(actions, expected_actions), _sequence_score(actions, swapped))
         missing = [a for a in expected_actions if a not in actions]
         for action in missing:
             errors.append(
@@ -916,6 +935,21 @@ def _similarity(left: str, right: str) -> float:
     if not left_set or not right_set:
         return 0.0
     return len(left_set & right_set) / len(left_set | right_set)
+
+
+#: Поля, где обучающийся пишет своими словами — сверяются по сути, а не дословно
+FREE_TEXT_FIELDS = frozenset({"description", "operator_message", "address_text"})
+
+
+def _stems(text: str) -> set[str]:
+    """Основы значимых слов: без коротких слов и окончаний (первые 5 букв) — падежи не мешают."""
+    return {w[:5] for w in re.findall(r"[а-яёa-z0-9]{4,}", (text or "").lower())}
+
+
+def _keyword_share(actual: str, expected: str) -> float:
+    """Доля основ слов эталона, которые есть в ответе обучающегося."""
+    want = _stems(expected)
+    return len(want & _stems(actual)) / len(want) if want else 1.0
 
 
 def _sequence_score(actual: list[str], expected: list[str]) -> float:
