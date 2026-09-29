@@ -545,7 +545,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> Path:
 
 
 def _flatten(value: Any) -> Any:
-    if isinstance(value, (dict, list)):
+    if isinstance(value, dict | list):
         import json
 
         return json.dumps(value, ensure_ascii=False)

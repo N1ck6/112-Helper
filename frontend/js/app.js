@@ -723,6 +723,62 @@
     }
   }
 
+  // Всё, что оператор ввёл в карточку, — в объект карточки (для сохранения и черновика)
+  function collectForm(call) {
+    const auto = currentAutoServices().filter((s) => removedAutoServices.indexOf(s) === -1);
+    const finalServices = auto.concat(manualServices.filter((s) => auto.indexOf(s) === -1));
+
+    call.types = selectedTypes.slice();
+    call.addressLine = addressInput.value.trim();
+    call.address = {
+      country: addrInputs.country.value.trim(),
+      region: addrInputs.region.value.trim(),
+      locality: addrInputs.locality.value.trim(),
+      okrug: addrInputs.okrug.value.trim(),
+      district: addrInputs.district.value.trim(),
+      street: addrInputs.street.value.trim(),
+      house: addrInputs.house.value.trim(),
+      korpus: addrInputs.korpus.value.trim(),
+      flat: addrInputs.flat.value.trim(),
+      entrance: addrInputs.entrance.value.trim(),
+      floor: addrInputs.floor.value.trim(),
+      code: addrInputs.code.value.trim(),
+      descriptive: addrInputs.descriptive.value.trim(),
+    };
+    call.caller = callerInput.value.trim();
+    call.callerStatus = callerStatusSelect.value;
+    call.foreignLanguage = foreignLanguageCheckbox.checked;
+    call.phoneGiven = phoneGivenInput.value.trim();
+    call.phoneOnsite = phoneOnsiteInput.value.trim();
+    call.description = descriptionInput.value.trim();
+    call.flags = Object.assign({}, currentFlags);
+    call.injuredCount = currentFlags.injured ? injuredCountInput.value : null;
+    call.survey = prunedSurvey();
+    call.services = finalServices;
+    call.fillSeconds = secondsElapsed;
+    call.workstation = session.workstation || call.workstation;
+  }
+
+  // Черновик: через 1,5 с после правки карточка уходит в Backend (ТЗ 1.5 — без потери данных
+  // при перезагрузке или сбое). После перезагрузки страницы карточка открывается с введённым.
+  let draftTimer = null;
+  function saveDraftNow() {
+    clearTimeout(draftTimer);
+    draftTimer = null;
+    if (!currentCall || currentCall.status === "graded" || !SERVER || !SERVER.saveDraft) return;
+    collectForm(currentCall);
+    SERVER.saveDraft(currentCall, typeLabels(currentCall) || []).catch(() => {});
+  }
+  function scheduleDraft() {
+    if (!currentCall || !SERVER || !SERVER.saveDraft) return;
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(saveDraftNow, 1500);
+  }
+  overlay.addEventListener("input", scheduleDraft);
+  overlay.addEventListener("change", scheduleDraft);
+  overlay.addEventListener("click", (e) => { if (e.target.closest("button, .flag-pill, [data-type]")) scheduleDraft(); });
+  window.addEventListener("pagehide", () => { if (draftTimer) saveDraftNow(); });
+
   function submitCard() {
     let valid = true;
 
@@ -748,38 +804,9 @@
     }
     if (!valid) return;
 
-    const auto = currentAutoServices().filter((s) => removedAutoServices.indexOf(s) === -1);
-    const finalServices = auto.concat(manualServices.filter((s) => auto.indexOf(s) === -1));
-
-    currentCall.types = selectedTypes.slice();
-    currentCall.addressLine = addressInput.value.trim();
-    currentCall.address = {
-      country: addrInputs.country.value.trim(),
-      region: addrInputs.region.value.trim(),
-      locality: addrInputs.locality.value.trim(),
-      okrug: addrInputs.okrug.value.trim(),
-      district: addrInputs.district.value.trim(),
-      street: addrInputs.street.value.trim(),
-      house: addrInputs.house.value.trim(),
-      korpus: addrInputs.korpus.value.trim(),
-      flat: addrInputs.flat.value.trim(),
-      entrance: addrInputs.entrance.value.trim(),
-      floor: addrInputs.floor.value.trim(),
-      code: addrInputs.code.value.trim(),
-      descriptive: addrInputs.descriptive.value.trim(),
-    };
-    currentCall.caller = callerInput.value.trim();
-    currentCall.callerStatus = callerStatusSelect.value;
-    currentCall.foreignLanguage = foreignLanguageCheckbox.checked;
-    currentCall.phoneGiven = phoneGivenInput.value.trim();
-    currentCall.phoneOnsite = phoneOnsiteInput.value.trim();
-    currentCall.description = descriptionInput.value.trim();
-    currentCall.flags = Object.assign({}, currentFlags);
-    currentCall.injuredCount = currentFlags.injured ? injuredCountInput.value : null;
-    currentCall.survey = prunedSurvey();
-    currentCall.services = finalServices;
-    currentCall.fillSeconds = secondsElapsed;
-    currentCall.workstation = session.workstation || currentCall.workstation;
+    collectForm(currentCall);
+    clearTimeout(draftTimer);
+    draftTimer = null;
     const call = currentCall;
     closeSheet();
     showToast("Карточка сохранена, идёт оценка…");
@@ -797,9 +824,9 @@
       });
   }
 
-  function startTimer() {
+  function startTimer(from) {
     stopTimer();
-    secondsElapsed = 0;
+    secondsElapsed = Number(from) || 0;
     renderTimer();
     timerInterval = setInterval(() => {
       secondsElapsed += 1;
@@ -863,7 +890,7 @@
       showToast(`Не принята диспетчером: ${call.dds.comment}`);
     }
 
-    startTimer();
+    startTimer(call.status === "new" ? call.fillSeconds : 0);
 
     overlay.hidden = false;
     fitOperator();
@@ -874,6 +901,7 @@
   }
 
   function closeSheet() {
+    if (draftTimer) saveDraftNow();
     overlay.classList.remove("is-open");
     overlay.setAttribute("aria-hidden", "true");
     stopTimer();

@@ -173,6 +173,10 @@ SERVICE_TITLES: dict[str, str] = {
     "zhilishnik": "ГБУ «Жилищник»",
     "mchs": "ЦУКС ГУ МЧС по г. Москве",
     "adi": "ГБУ «Автомобильные дороги»",
+    "codd": "ГКУ ЦОДД",
+    "ods": "ОДС ПСЦ",
+    "uprava": "Управа района",
+    "mosbez": "ГКУ «Мосгорбезопасность»",
 }
 
 EKP_MATRIX: dict[str, list[tuple[str, bool]]] = {

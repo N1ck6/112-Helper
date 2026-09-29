@@ -130,7 +130,7 @@ services:
       ml:
         condition: service_healthy   # seed при установке генерирует сценарии через ML
     ports:
-      - "${API_PORT:-8000}:8000"   # /docs — документация API
+      - "${SERVICE_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"   # /docs — документация API
     volumes:
       - backend-var:/srv/app/var
       - ./ml/data/raw:/srv/classifier:ro
@@ -157,7 +157,7 @@ services:
         condition: service_healthy
         required: false   # без профиля llm ML работает без LLM
     ports:
-      - "${ML_PORT:-8100}:8000"   # /docs — документация ML API
+      - "${SERVICE_BIND:-127.0.0.1}:${ML_PORT:-8100}:8000"   # /docs — документация ML API
     restart: unless-stopped
 
   # Локальная LLM (профиль llm): модель скачивается один раз в том ollama-models.

@@ -15,7 +15,7 @@ services:
       # Порт на стороне компьютера настраивается: если на машине уже работает
       # свой PostgreSQL на 5432, контейнер поднимается на другом порту
       # (POSTGRES_HOST_PORT=5433 в .env), и они не мешают друг другу.
-      - "${POSTGRES_HOST_PORT:-5432}:5432"
+      - "${SERVICE_BIND:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -39,7 +39,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "${SERVICE_BIND:-127.0.0.1}:8000:8000"
     volumes:
       - ./var:/srv/app/var
     command: >

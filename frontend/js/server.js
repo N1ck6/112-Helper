@@ -142,6 +142,9 @@
       });
     } else {
       Object.assign(inc, { status: base ? base.status : "new" });
+      // после перезагрузки страницы — всё, что оператор успел ввести (черновик в Backend)
+      const draft = (a.draft_payload || {})._ui;
+      if (draft && !base) Object.assign(inc, draft);
     }
     return inc;
   }
@@ -246,6 +249,17 @@
       notification_services: c.services || [],
     };
   }
+
+  // Черновик карточки оператора: поля АРМ-112 и состояние формы, чтобы вернуть её как была
+  const DRAFT_KEYS = ["types", "addressLine", "address", "caller", "callerStatus", "foreignLanguage", "phoneGiven",
+    "phoneOnsite", "description", "flags", "injuredCount", "survey", "services", "fillSeconds"];
+  S.saveDraft = function (inc, typeLabels) {
+    if (!inc || !inc.server) return Promise.resolve(null);
+    const ui = {};
+    DRAFT_KEYS.forEach((k) => { if (inc[k] !== undefined) ui[k] = inc[k]; });
+    const payload = Object.assign(toPayload(inc, typeLabels), { _ui: ui });
+    return req("PUT", "/training/attempts/" + inc.server.attemptId + "/draft", { payload: payload });
+  };
 
   S.submit = async function (inc, typeLabels) {
     S.action(inc, "classified");

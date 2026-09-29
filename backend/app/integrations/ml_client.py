@@ -7,10 +7,11 @@ from typing import Any, Protocol
 
 import httpx
 
+from app.core import address as address_rules
 from app.core.arm112 import ADDRESS_FIELDS as ARM112_ADDRESS_FIELDS
 from app.core.arm112 import FIELD_LABELS as ARM112_FIELD_LABELS
 from app.core.arm112 import REQUIRED_CARD_FIELDS as ARM112_REQUIRED_FIELDS
-from app.core.arm112 import format_address
+from app.core.arm112 import format_address, service_title
 from app.core.config import settings
 from app.core.exceptions import IntegrationError
 from app.core.logging import get_logger
@@ -421,6 +422,11 @@ class StubMLClient:
 
         # 1. Полнота: обязательные поля карточки АРМ-112.
         required = payload.get("required_fields") or list(REQUIRED_CARD_FIELDS)
+        if expected:
+            #: Требовать можно только то, что есть в эталоне: у вызова «МКАД, 74 км» нет дома,
+            #: а заявитель «вызывает мама» не называет ФИО. Классификация и опросная карта
+            #: заполняются всегда.
+            required = [f for f in required if f in expected or f in ALWAYS_REQUIRED]
         for field in required:
             if not _as_text(submitted.get(field)).strip():
                 errors.append(
@@ -443,12 +449,21 @@ class StubMLClient:
         comparable = 0.0
         address_errors = 0
         for field, value in expected.items():
+            if field == "notification_services":
+                comparable += 1.0
+                service_errors = _services_check(submitted.get(field), value)
+                errors.extend(service_errors)
+                if not any(e["code"] == "service_missing" for e in service_errors):
+                    matched += 1.0
+                continue
             is_address = _is_address_field(field)
             field_weight = address_factor if is_address else 1.0
             comparable += field_weight
             actual = _as_text(submitted.get(field))
             reference_value = _as_text(value)
-            if _normalize(actual) == _normalize(reference_value):
+            if _normalize(actual) == _normalize(reference_value) or (
+                is_address and address_rules.same(field, actual, reference_value)
+            ):
                 matched += field_weight
                 continue
             if not actual.strip():
@@ -950,6 +965,68 @@ def _keyword_share(actual: str, expected: str) -> float:
     """Доля основ слов эталона, которые есть в ответе обучающегося."""
     want = _stems(expected)
     return len(want & _stems(actual)) / len(want) if want else 1.0
+
+
+#: Поля, которые обязательны в любой карточке, даже если эталон их не содержит
+ALWAYS_REQUIRED = frozenset({"incident_class", "survey_signs", "description"})
+
+#: Службы списка оповещения: код → слова, по которым служба узнаётся в подписи интерфейса
+SERVICE_ALIASES: dict[str, tuple[str, ...]] = {
+    "101": ("101", "01", "мчс", "пожарн"),
+    "102": ("102", "02", "омвд", "полиц"),
+    "103": ("103", "03", "смп", "скорая"),
+    "104": ("104", "04", "мосгаз", "газов"),
+    "mosvodokanal": ("мосводоканал",),
+    "zhilishnik": ("жилищник",),
+    "moek": ("моэк",),
+    "dps": ("дпс", "гибдд"),
+    "codd": ("цодд",),
+    "ods": ("одс",),
+    "uprava": ("упр", "управ"),
+    "mosbez": ("мос.без", "мосбез"),
+}
+EMERGENCY_SERVICES = frozenset({"101", "102", "103", "104"})
+
+
+def _service_codes(value: Any) -> set[str]:
+    """Коды служб из того, что прислал интерфейс: «Служба 101 (МЧС)», «101», «mosvodokanal»."""
+    items = value if isinstance(value, list | tuple | set) else [value] if value else []
+    codes: set[str] = set()
+    for item in items:
+        text = str(item.get("code") if isinstance(item, dict) else item).lower().strip()
+        if text in SERVICE_ALIASES:
+            codes.add(text)
+            continue
+        digits = re.findall(r"\b(10[1-4]|0[1-4])\b", text)
+        if digits:
+            codes.update("1" + d[-2:] for d in digits)
+            continue
+        for code, aliases in SERVICE_ALIASES.items():
+            if any(alias in text for alias in aliases if not alias.isdigit()):
+                codes.add(code)
+                break
+    return codes
+
+
+def _services_check(actual: Any, expected: Any) -> list[dict[str, Any]]:
+    """Выбор служб оператором (ТЗ 1.1): пропущенная служба — ошибка, лишняя экстренная — замечание."""
+    want, got = _service_codes(expected), _service_codes(actual)
+    errors: list[dict[str, Any]] = []
+    for code in sorted(want - got):
+        errors.append({
+            "category": "data_accuracy", "severity": "major", "code": "service_missing",
+            "message": f"Не выбрана служба «{service_title(code)}»",
+            "field_code": "notification_services", "expected": service_title(code),
+            "actual": ", ".join(service_title(c) for c in sorted(got)) or "—", "penalty": 8.0,
+        })
+    for code in sorted((got - want) & EMERGENCY_SERVICES):
+        errors.append({
+            "category": "data_accuracy", "severity": "minor", "code": "service_extra",
+            "message": f"Лишняя служба «{service_title(code)}»: по этому вызову её не привлекают",
+            "field_code": "notification_services", "expected": "—",
+            "actual": service_title(code), "penalty": 3.0,
+        })
+    return errors
 
 
 def _sequence_score(actual: list[str], expected: list[str]) -> float:

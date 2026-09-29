@@ -6,6 +6,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import address as address_rules
 from app.models.catalog import DutyService
 from app.models.enums import ServiceLevel
 
@@ -15,11 +16,11 @@ AREA_FIELD = "address_area"  # а это район
 
 
 def _normalize(value: object) -> str:
-    text = str(value or "").strip().lower()
-    for prefix in ("район ", "р-н ", "г. ", "город ", "дды ", "ддс "):
-        if text.startswith(prefix):
-            text = text[len(prefix) :]
-    return text.replace("ё", "е").replace("-", " ").replace("  ", " ").strip()
+    return address_rules.area(value)
+
+
+def _okrug(value: object) -> str:
+    return address_rules.okrug(value)
 
 
 class RoutingService:
@@ -34,7 +35,7 @@ class RoutingService:
         category_codes: Sequence[str] = (),
     ) -> list[dict[str, Any]]:
         payload = payload or {}
-        okrug = _normalize(payload.get(OKRUG_FIELD))
+        okrug = _okrug(payload.get(OKRUG_FIELD))
         area = _normalize(payload.get(AREA_FIELD))
         if not okrug and not area and not category_codes:
             return []
@@ -121,7 +122,7 @@ class RoutingService:
         categories: Sequence[str],
     ) -> str | None:
         service_area = _normalize(service.area)
-        service_okrug = _normalize(service.okrug)
+        service_okrug = _okrug(service.okrug)
 
         #: Ведомственная ДДС: привлекается по типу происшествия независимо от района.
         if categories and service.categories:

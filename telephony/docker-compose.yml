@@ -14,7 +14,7 @@ services:
     ports:
       - "${EXTERNAL_SIGNALING_PORT:-5063}:5060/udp"
       - "${EXTERNAL_SIGNALING_PORT:-5063}:5060/tcp"
-      - "5041:5038/tcp"                 # AMI
+      - "${SERVICE_BIND:-127.0.0.1}:5041:5038/tcp"                 # AMI
       - "10000-10059:10000-10059/udp"   # RTP (= rtp.conf), до 30 разговоров
     volumes:
       - ./asterisk/conf:/etc/asterisk-templates:ro
@@ -49,7 +49,7 @@ services:
     depends_on:
       - voice-service
     ports:
-      - "${CALL_API_PORT:-8092}:8092"
+      - "${SERVICE_BIND:-127.0.0.1}:${CALL_API_PORT:-8092}:8092"
     environment:
       - VOICE_SERVICE_URL=http://voice-service:8091
       # ML: POST {ML_API_URL}/dialogue/turn; Backend: POST {BACKEND_URL}/telephony/events (формат Backend + токен)
@@ -86,7 +86,7 @@ services:
     depends_on:
       - asterisk
     ports:
-      - "8090:8090"   # http://localhost:8090/ — список записей, playback в браузере
+      - "${SERVICE_BIND:-127.0.0.1}:8090:8090"   # http://localhost:8090/ — список записей, playback в браузере
     volumes:
       - ../data/recordings:/recordings
       - ../data/sessions:/data
@@ -105,7 +105,7 @@ services:
     build: ./voice_service
     container_name: telephony-voice-service
     ports:
-      - "${VOICE_SERVICE_PORT:-8091}:8091"
+      - "${SERVICE_BIND:-127.0.0.1}:${VOICE_SERVICE_PORT:-8091}:8091"
     environment:
       - STT_ENGINE=${STT_ENGINE:-faster_whisper}
       # Silero — мягкие естественные голоса (CC BY-NC); не загрузился — Piper (MIT), потом заглушка

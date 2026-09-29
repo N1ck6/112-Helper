@@ -66,7 +66,7 @@ class AdminService:
             raise BusinessRuleError("Изменение параметров безопасности требует отдельного права")
 
         setting = await self.settings_repo.by_key(data.key)
-        value = data.value if isinstance(data.value, (dict, list)) else {"value": data.value}
+        value = data.value if isinstance(data.value, dict | list) else {"value": data.value}
         before = setting.value if setting else None
         if setting is None:
             setting = await self.settings_repo.create(

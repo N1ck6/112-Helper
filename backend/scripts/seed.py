@@ -305,6 +305,22 @@ async def seed_scenarios(session, users: dict[str, User], categories: dict) -> i
     return created
 
 
+async def seed_tickets(session, users: dict[str, User]) -> int:
+    """Билеты-задачи заказчика (96 вызовов) — эталонные сценарии и карточки в банке заданий.
+
+    Повторный запуск добавляет только отсутствующие билеты: уже работающий стенд получает их
+    при следующем старте без пересоздания базы.
+    """
+    from app.services.tickets import TicketImportService
+
+    result = await TicketImportService(session).import_all(users["teacher"])
+    if result["imported"]:
+        print(f"  ✓ билеты-задачи заказчика: {result['imported']} вызовов с эталонами и карточками")
+    else:
+        print(f"  • билеты-задачи уже загружены ({result['skipped']}) — пропускаю")
+    return result["imported"]
+
+
 async def reset_schema() -> None:
     import sqlalchemy as sa
 
@@ -339,6 +355,7 @@ async def main() -> None:
         await seed_group(session, users)
         await seed_incident_classifier(session)
         await seed_scenarios(session, users, categories)
+        await seed_tickets(session, users)
     print("\nГотово. Учётные записи для входа (пароли — в корневом .env):")
     for username, _, role, _password in DEMO_USERS:
         print(f"  {username:9} — {ROLE_TITLES[role]}")

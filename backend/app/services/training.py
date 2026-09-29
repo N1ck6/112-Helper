@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import difficulty
 from app.core.arm112 import (
     COMMENT_EXAMPLES,
-    caller_knowledge,
     SERVICE_FORBIDDEN_STATUSES,
+    caller_knowledge,
     primary_services,
     service_codes,
     service_title,
@@ -24,8 +24,8 @@ from app.core.logging import get_logger
 from app.core.pagination import PageParams
 from app.core.permissions import Perm, RoleCode
 from app.core.security import new_opaque_token, utcnow
-from app.integrations.monitoring import ACTIVE_ATTEMPTS, ACTIVE_LESSONS
 from app.integrations.ml_client import get_ml_client
+from app.integrations.monitoring import ACTIVE_ATTEMPTS, ACTIVE_LESSONS
 from app.integrations.telephony_client import get_telephony_client
 from app.models.card import IncidentCard
 from app.models.enums import (

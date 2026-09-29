@@ -80,6 +80,21 @@ def _story(incident_type: str, address: str, victims: int) -> str:
     return f"У нас {incident_type}{tail}."
 
 
+# Основная служба классификатора -> код службы в списке оповещения АРМ-112 (backend/app/core/arm112.py)
+SERVICE_CODES = {"MCHS": "101", "POLICE": "102", "AMBULANCE": "103", "MOSGAZ": "104"}
+
+
+def _services(classification: Dict[str, Any], victims: int) -> List[str]:
+    """Службы, которые оператор должен выбрать: основная по классификатору, при пострадавших — 103."""
+    codes: List[str] = []
+    main = SERVICE_CODES.get(str(classification.get("main_service") or "").upper())
+    if main:
+        codes.append(main)
+    if victims and "103" not in codes:
+        codes.append("103")
+    return codes
+
+
 def _expected_fields(classification: Dict[str, Any], rnd: random.Random, difficulty: str) -> Dict[str, Any]:
     """Эталон карточки АРМ-112 (коды полей — backend/app/core/arm112.py)."""
     incident_type = classification.get("incident_type") or "происшествие"
@@ -100,6 +115,7 @@ def _expected_fields(classification: Dict[str, Any], rnd: random.Random, difficu
         "has_victims": bool(victims),
         "victims_count": victims,
         "description": _story(incident_type, address, victims),
+        "notification_services": _services(classification, victims),
     }
 
 
