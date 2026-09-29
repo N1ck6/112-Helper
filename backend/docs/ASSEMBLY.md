@@ -1,7 +1,7 @@
 # Как собрать комплекс из четырёх частей
 
 > **Актуально:** комплекс собирается корневым `docker-compose.yml` репозитория
-> (`docker compose --profile llm up -d --build`, см. [README](../../README.md)). Все части лежат в
+> (`docker compose up -d --build`, см. [README](../../README.md)). Все части лежат в
 > одном репозитории, браузер ходит через nginx `:8080`, телефония получает реплики собеседников
 > прямо из ML (`/dialogue/turn`) и шлёт события в backend. Ниже — исходный замысел архитектуры.
 
@@ -54,7 +54,7 @@ Backend — центр: он хранит состояние и вызывает
 
 ```bash
 # весь комплекс с локальной LLM (Ollama + qwen3:4b-instruct)
-docker compose --profile llm up -d --build
+docker compose up -d --build
 
 # только backend + база для разработки backend (папка backend/)
 docker compose up -d postgres

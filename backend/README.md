@@ -56,7 +56,7 @@ uvicorn app.main:app --reload
 ([README](../README.md)):
 
 ```bash
-docker compose --profile llm up -d --build
+docker compose up -d --build
 python backend/scripts/check_stack.py --full      # проверка, что части видят друг друга
 ```
 

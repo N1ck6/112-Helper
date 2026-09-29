@@ -70,52 +70,15 @@ class HttpDirectoryClient:
             self._client = None
 
 
-class StubDirectoryClient:
-    name = "stub"
-
-    USERS: list[dict[str, Any]] = [
-        {
-            "external_id": "DDS-1001",
-            "username": "ivanov.dds",
-            "full_name": "Иванов Алексей Викторович",
-            "email": "ivanov.dds@dds112.local",
-            "organization": "ДДС ЖКХ Северного округа",
-            "position": "Диспетчер",
-            "role": "student",
-        },
-        {
-            "external_id": "DDS-1002",
-            "username": "petrova.dds",
-            "full_name": "Петрова Наталья Сергеевна",
-            "email": "petrova.dds@dds112.local",
-            "organization": "ДДС ЖКХ Северного округа",
-            "position": "Старший диспетчер",
-            "role": "student",
-        },
-    ]
-
-    async def fetch_users(self) -> list[dict[str, Any]]:
-        return [dict(user) for user in self.USERS]
-
-    async def authenticate(self, username: str, password: str) -> dict[str, Any] | None:
-        logger.info("directory_stub_auth_denied", extra={"username": username})
-        return None
-
-    async def close(self) -> None:
-        return None
-
-
 _client: DirectoryClient | None = None
 
 
-def get_directory_client() -> DirectoryClient:
+def get_directory_client() -> DirectoryClient | None:
+    """Каталог организации (LDAP-шлюз). None — каталог не подключён (DIRECTORY_URL пуст):
+    учётные записи ведёт администратор в самом тренажёре."""
     global _client
-    if _client is None:
-        _client = (
-            HttpDirectoryClient(settings.DIRECTORY_URL)
-            if settings.DIRECTORY_URL
-            else StubDirectoryClient()
-        )
+    if _client is None and settings.DIRECTORY_URL:
+        _client = HttpDirectoryClient(settings.DIRECTORY_URL)
     return _client
 
 

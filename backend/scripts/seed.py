@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -32,11 +33,14 @@ from app.schemas.scenario import GenerateScenariosRequest, ScenarioApproveReques
 from app.services.cards import CardService  # noqa: E402
 from app.services.scenarios import ScenarioService  # noqa: E402
 
+#: Стартовые учётные записи. Пароли — из корневого .env (установщик генерирует случайные);
+#: значения по умолчанию — только для автотестов и разработки без Docker.
+#: Пароль задаётся при создании записи; дальше его меняет сам пользователь или администратор.
 DEMO_USERS = [
-    ("admin", "Администратов Артём Сергеевич", RoleCode.ADMIN, "Admin#2026"),
-    ("teacher", "Преподавалова Мария Ивановна", RoleCode.TEACHER, "Teacher#2026"),
-    ("student", "Учащихся Дмитрий Олегович", RoleCode.STUDENT, "Student#2026"),
-    ("student2", "Смирнова Елена Павловна", RoleCode.STUDENT, "Student#2026"),
+    ("admin", "Администратов Артём Сергеевич", RoleCode.ADMIN, os.getenv("ADMIN_PASSWORD") or "Admin#2026"),
+    ("teacher", "Преподавалова Мария Ивановна", RoleCode.TEACHER, os.getenv("TEACHER_PASSWORD") or "Teacher#2026"),
+    ("student", "Учащихся Дмитрий Олегович", RoleCode.STUDENT, os.getenv("STUDENT_PASSWORD") or "Student#2026"),
+    ("student2", "Смирнова Елена Павловна", RoleCode.STUDENT, os.getenv("STUDENT_PASSWORD") or "Student#2026"),
 ]
 
 CATEGORIES = [
@@ -335,9 +339,9 @@ async def main() -> None:
         await seed_group(session, users)
         await seed_incident_classifier(session)
         await seed_scenarios(session, users, categories)
-    print("\nГотово. Учётные записи для входа (только учебный контур):")
-    for username, _, role, password in DEMO_USERS:
-        print(f"  {username:9} / {password:14} — {ROLE_TITLES[role]}")
+    print("\nГотово. Учётные записи для входа (пароли — в корневом .env):")
+    for username, _, role, _password in DEMO_USERS:
+        print(f"  {username:9} — {ROLE_TITLES[role]}")
     print("\nПроверить API: http://localhost:8000/docs")
 
 

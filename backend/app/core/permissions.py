@@ -108,7 +108,9 @@ ADMIN_PERMISSIONS: set[Perm] = {
     Perm.GROUPS_READ, Perm.GROUPS_MANAGE,
     Perm.SYSTEM_SERVICES, Perm.SYSTEM_CONFIG, Perm.SYSTEM_BACKUP, Perm.SYSTEM_LOGS,
     Perm.SYSTEM_MONITOR, Perm.AUDIT_READ,
-    Perm.CATALOG_READ, Perm.SCENARIOS_READ, Perm.CARDS_READ, Perm.MATERIALS_READ,
+    #: классификатор и справочные материалы — для администрирования данных; сценарии, карточки
+    #: с эталонами и оценки — учебный контент преподавателя (п.2 ТЗ: минимальные привилегии)
+    Perm.CATALOG_READ, Perm.MATERIALS_READ,
     Perm.TELEPHONY_MANAGE,
 }
 
@@ -125,9 +127,11 @@ TEACHER_PERMISSIONS: set[Perm] = {
     Perm.TELEPHONY_USE,
 }
 
+#: Обучающийся не читает сценарии и карточки напрямую: там эталон и то, что оператор 112 должен
+#: выяснить у заявителя. Свою карточку он получает только через /training — с правилами видимости.
 STUDENT_PERMISSIONS: set[Perm] = {
     Perm.LESSONS_PARTICIPATE,
-    Perm.SCENARIOS_READ, Perm.MATERIALS_READ, Perm.CARDS_READ, Perm.CATALOG_READ,
+    Perm.MATERIALS_READ, Perm.CATALOG_READ,
     Perm.EVALUATIONS_READ_OWN, Perm.RECOMMENDATIONS_READ_OWN,
     Perm.REPORTS_READ_OWN, Perm.CERTIFICATES_READ_OWN,
     Perm.TELEPHONY_USE,

@@ -2,7 +2,8 @@
 # + аудио + voice-service (STT/TTS).
 # Запускается из корня репозитория в составе полного стенда (корневой docker-compose.yml):
 # реплики собеседников даёт ML-сервис (ml:8000), события звонков принимает Backend (api:8000).
-# .env не обязателен: у всех переменных есть значения по умолчанию (пароли — сменить!).
+# Настройки и пароли — общий .env в корне репозитория (include … env_file в корневом compose);
+# пароли SIP/AMI и токен событий обязательны: их генерирует start.bat / start.sh.
 
 services:
   asterisk:
@@ -24,14 +25,14 @@ services:
       # Реплики абонента от TTS: voice-service пишет, Asterisk играет STREAM FILE /tts/<name>.
       - ../data/tts:/tts:ro
     environment:
-      - AMI_PASSWORD=${AMI_PASSWORD:-changeme_ami_pass}
-      - SIP_ALICE_PASSWORD=${SIP_ALICE_PASSWORD:-changeme_alice}
-      - SIP_BOB_PASSWORD=${SIP_BOB_PASSWORD:-changeme_bob}
+      - AMI_PASSWORD=${AMI_PASSWORD:?AMI_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
+      - SIP_ALICE_PASSWORD=${SIP_ALICE_PASSWORD:?SIP_ALICE_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
+      - SIP_BOB_PASSWORD=${SIP_BOB_PASSWORD:?SIP_BOB_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
       - EXTERNAL_MEDIA_ADDRESS=${EXTERNAL_MEDIA_ADDRESS:-127.0.0.1}
       - EXTERNAL_SIGNALING_PORT=${EXTERNAL_SIGNALING_PORT:-5063}
       # рабочие места обучающихся ws01..wsNN (логин = ws01, пароль общий для класса)
       - TRAINEE_ACCOUNTS=${TRAINEE_ACCOUNTS:-20}
-      - TRAINEE_PASSWORD=${TRAINEE_PASSWORD:-changeme_ws}
+      - TRAINEE_PASSWORD=${TRAINEE_PASSWORD:?TRAINEE_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
     healthcheck:
       test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 10s
@@ -55,12 +56,12 @@ services:
       - ML_API_URL=${ML_API_URL:-http://ml:8000}
       - BACKEND_URL=${BACKEND_URL-http://api:8000/api/v1}
       - BACKEND_EVENTS_FORMAT=backend
-      - TELEPHONY_WEBHOOK_TOKEN=${TELEPHONY_WEBHOOK_TOKEN:-dev-telephony-token}
+      - TELEPHONY_WEBHOOK_TOKEN=${TELEPHONY_WEBHOOK_TOKEN:?TELEPHONY_WEBHOOK_TOKEN не задан в .env — запустите start.bat (Windows) или ./start.sh}
       - DEFAULT_TRAINEE=${DEFAULT_TRAINEE:-ws01}
       - AMI_HOST=asterisk
       - AMI_PORT=5038
       - AMI_USER=call-control
-      - AMI_PASSWORD=${AMI_PASSWORD:-changeme_ami_pass}
+      - AMI_PASSWORD=${AMI_PASSWORD:?AMI_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
       - RING_TIMEOUT_SEC=${RING_TIMEOUT_SEC:-30}
       - MAX_TURNS=${MAX_TURNS:-12}
       - MAX_CALL_SEC=${MAX_CALL_SEC:-300}

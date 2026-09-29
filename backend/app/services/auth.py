@@ -85,6 +85,8 @@ class AuthService:
         """Вход пользователя, заведённого в локальной системе управления доступом."""
         client = get_directory_client()
         try:
+            if client is None:
+                raise IntegrationError("каталог организации не подключён (DIRECTORY_URL)")
             profile = await client.authenticate(user.username, password)
         except IntegrationError as exc:
             await self._reject_login(

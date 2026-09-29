@@ -115,6 +115,12 @@ class UserService:
         self, actor: User, *, dry_run: bool = False, request: Request | None = None
     ) -> dict[str, Any]:
         client = get_directory_client()
+        if client is None:
+            raise BusinessRuleError(
+                "Каталог организации не подключён (DIRECTORY_URL): учётные записи "
+                "создаёт администратор в разделе «Пользователи»",
+                code="directory_not_configured",
+            )
         entries = await client.fetch_users()
 
         created: list[str] = []

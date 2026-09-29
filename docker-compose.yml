@@ -1,10 +1,12 @@
-# Полный стенд тренажёра ДДС-112: Frontend + Backend + PostgreSQL + ML + телефония — одной командой:
+# Полный стенд тренажёра ДДС-112: Frontend + Backend + PostgreSQL + ML + локальная LLM + телефония.
 #
-#   docker compose --profile llm up -d --build     # с локальной LLM (Ollama + qwen3:4b-instruct, ~2.5 ГБ)
-#   docker compose up -d --build                   # без LLM: ML работает на классификаторе и правилах
+# Установка и запуск — одним файлом из корня: start.bat (Windows) или ./start.sh (Linux/macOS).
+# Он создаёт .env со случайными паролями, поднимает стенд и открывает АРМ в браузере. Вручную:
+#   cp .env.example .env   (и задать пароли)   →   docker compose up -d --build
+# LLM (Ollama + qwen3:4b-instruct, ~2.5 ГБ) включена в .env: COMPOSE_PROFILES=llm; пусто — без LLM.
 #
 # http://localhost:8080 — АРМ (с другого ПК: http://<IP>:8080). Через этот же адрес (nginx)
-# браузер ходит в Backend (/api/), телефонию (/telephony/, /recordings/) и ML (/ml/dialogue/).
+# браузер ходит в Backend (/api/), телефонию (/telephony/, /recordings/) и ML (/ml/).
 #
 # Кто с кем связан (контракты — ТЗ_итоговое §6):
 #   frontend ─/api/v1─> api (backend) ──> postgres
@@ -15,12 +17,14 @@
 #
 # Каждая роль держит свой Dockerfile в своей папке; сервисы телефонии — в telephony/docker-compose.yml
 # (подключается через include).
-# Настройки — .env рядом с этим файлом (шаблон .env.example) и telephony/.env. Оба необязательны,
-# но пароли и SECRET_KEY для эксплуатации нужно задать.
+# Все настройки — один .env рядом с этим файлом (шаблон .env.example); пароли и ключи обязательны.
 # Не запускать одновременно с `docker compose up` из telephony/ (те же имена контейнеров).
 
 include:
   - path: telephony/docker-compose.yml
+    # общий .env стенда: телефония читает настройки и пароли оттуда же, что и остальные сервисы
+    env_file: .env
+    env_file: .env
 
 services:
   # ------------------------------------------------------------------ Frontend
@@ -51,7 +55,7 @@ services:
     container_name: trainer-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-dds112}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dds112}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
       POSTGRES_DB: ${POSTGRES_DB:-dds112}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -71,7 +75,7 @@ services:
     environment:
       PGHOST: postgres
       PGUSER: ${POSTGRES_USER:-dds112}
-      PGPASSWORD: ${POSTGRES_PASSWORD:-dds112}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
       PGDATABASE: ${POSTGRES_DB:-dds112}
       BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
       BACKUP_KEEP: ${BACKUP_KEEP:-14}
@@ -95,17 +99,18 @@ services:
   api:
     build: ./backend
     container_name: trainer-api
-    env_file:
-      - path: backend/.env
-        required: false
     environment:
       APP_ENV: ${APP_ENV:-local}
+      # стартовые учётные записи (seed при первом запуске); пароли меняются потом в интерфейсе
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
+      TEACHER_PASSWORD: ${TEACHER_PASSWORD:?TEACHER_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
+      STUDENT_PASSWORD: ${STUDENT_PASSWORD:?STUDENT_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_USER: ${POSTGRES_USER:-dds112}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dds112}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
       POSTGRES_DB: ${POSTGRES_DB:-dds112}
-      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me-0123456789abcdef}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY не задан в .env — запустите start.bat (Windows) или ./start.sh}
       # ML-сервис команды; чего он не умеет (501) или не смог — считают правила backend
       ML_SERVICE_URL: http://ml:8000
       ML_USE_STUB: "false"
@@ -114,7 +119,7 @@ services:
       # Телефония: backend поднимает звонки, телефония присылает события на вебхук
       TELEPHONY_SERVICE_URL: http://virtual-caller:8092
       TELEPHONY_USE_STUB: "false"
-      TELEPHONY_WEBHOOK_TOKEN: ${TELEPHONY_WEBHOOK_TOKEN:-dev-telephony-token}
+      TELEPHONY_WEBHOOK_TOKEN: ${TELEPHONY_WEBHOOK_TOKEN:?TELEPHONY_WEBHOOK_TOKEN не задан в .env — запустите start.bat (Windows) или ./start.sh}
       # Браузер на стенде ходит через nginx (CORS не нужен); это — frontend с dev-сервера
       # на этом же ПК (Live Server :5500, другой FRONTEND_PORT)
       CORS_ORIGINS: '["http://localhost:${FRONTEND_PORT:-8080}","http://localhost:5500","http://127.0.0.1:5500"]'

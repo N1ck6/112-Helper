@@ -8,11 +8,8 @@ API для Frontend/Backend. **Контракты для других ролей
 ## Запуск
 
 Из корня репозитория — весь комплекс (телефония + frontend + backend + ML), см. [README](../README.md):
-
-```bash
-docker compose --profile llm up -d --build
-docker compose ps          # все сервисы healthy
-```
+`start.bat` (Windows) или `./start.sh`; вручную — `docker compose up -d --build`, затем `docker compose ps`
+(все сервисы healthy).
 
 В полном стенде собеседникам отвечает ML-сервис (`ml:8000/dialogue/turn`), события звонков
 уходят в Backend (`api:8000/api/v1/telephony/events`), а Backend сам поднимает входящий 112 на
@@ -20,7 +17,8 @@ docker compose ps          # все сервисы healthy
 
 - АРМ: http://localhost:8080 (с другого ПК — `http://<IP>:8080`), телефония на том же адресе:
   `/telephony/` (API, события), `/recordings/` (записи) — [deploy/nginx/default.conf](../deploy/nginx/default.conf).
-- `.env` не обязателен. Для класса/демо: `cp telephony/.env.example telephony/.env`, сменить пароли.
+- Настройки и пароли телефонии (SIP, AMI, STT/TTS, паузы) — в общем `.env` корня (шаблон `.env.example`,
+  создаёт `start.bat` / `start.sh`); отдельного `telephony/.env` нет.
 - Первый старт скачивает модели STT/TTS (~0.8 ГБ: Whisper, Silero, Piper; нужен интернет один раз, voice-service
   `starting` до ~10 мин). Нет интернета — работают заглушки (`/health` → `degraded`).
 - Телефония запускается только в составе полного стенда: ей нужны ML (реплики) и Backend (события).
@@ -79,7 +77,7 @@ docker compose ps          # все сервисы healthy
 python telephony/demo/demo_calls.py                 # 5 тестовых звонков без человека, печатает расшифровки
 python telephony/demo/demo_calls.py --parallel 10   # 10 звонков одновременно
 python telephony/demo/demo_calls.py dispatch --trainee ws01   # позвонит на ваш софтфон ws01
-pytest tests/ -v                                     # AMI_PASSWORD=<из .env>; без стенда — только unit
+pytest tests/ -v                                     # пароль AMI — из корневого .env; без стенда — только unit
 ```
 
 Реплики «диспетчера» в демо и тестах заранее синтезируются голосом Irina (`data/tts/operator_9XXX.wav`)
@@ -107,7 +105,7 @@ API: http://localhost:8092/health (`ml`, `voice_service`, `ami`), `/numbers`, `/
 ```
 telephony/
 ├── API.md                  контракт: API звонков, события, ML, интеграция frontend
-├── docker-compose.yml      все сервисы контура; .env.example — все настройки с пояснениями
+├── docker-compose.yml      все сервисы контура (настройки — корневой .env.example)
 ├── asterisk/               Dockerfile, entrypoint (рендер конфигов, аккаунты ws01..), conf/ (pjsip, dialplan)
 ├── virtual_caller/
 │   ├── directory.json      справочник служб: номер, должность, пол голоса, текст ответа

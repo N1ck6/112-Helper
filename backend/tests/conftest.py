@@ -62,6 +62,18 @@ async def seeded(prepare_database):
 
 
 @pytest.fixture
+def directory():
+    """Подключённый каталог организации (в приложении по умолчанию его нет)."""
+    from app.integrations.directory import set_directory_client
+    from tests.directory_fake import FakeDirectory
+
+    fake = FakeDirectory()
+    set_directory_client(fake)
+    yield fake
+    set_directory_client(None)
+
+
+@pytest.fixture
 async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as async_client:

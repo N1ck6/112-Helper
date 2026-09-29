@@ -22,7 +22,7 @@
 | `.env.example` | Образец настроек со комментариями к каждой переменной. `.env` создаётся из него |
 | `Dockerfile` | Сборка образа backend |
 | `docker-compose.yml` | Только наша часть: backend + PostgreSQL. Для самостоятельной работы |
-| `../docker-compose.yml` (корень репозитория) | **Весь комплекс из четырёх частей** (п.4.4 ТЗ): `docker compose --profile llm up -d --build` |
+| `../docker-compose.yml` (корень репозитория) | **Весь комплекс из четырёх частей** (п.4.4 ТЗ): `docker compose up -d --build` |
 | `.dockerignore`, `.gitignore` | Что не попадает в образ и в репозиторий |
 | `locustfile.py` | Сценарий нагрузочного теста: 100 сессий, вход → занятие → карточка → сдача |
 

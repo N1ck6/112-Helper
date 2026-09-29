@@ -8,8 +8,15 @@ import zipfile
 from httpx import AsyncClient
 
 
+async def test_directory_sync_without_directory_is_refused(client: AsyncClient, admin_headers) -> None:
+    """Каталог не подключён — никаких выдуманных учётных записей, понятный отказ."""
+    response = await client.post("/api/v1/users/sync-directory", headers=admin_headers)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "directory_not_configured"
+
+
 async def test_directory_sync_creates_and_updates_accounts(
-    client: AsyncClient, admin_headers
+    client: AsyncClient, admin_headers, directory
 ) -> None:
     """Учётные записи приезжают из каталога организации, а не заводятся руками."""
     preview = await client.post(
@@ -45,7 +52,7 @@ async def test_directory_sync_creates_and_updates_accounts(
 
 
 async def test_directory_account_cannot_login_with_local_password(
-    client: AsyncClient, admin_headers
+    client: AsyncClient, admin_headers, directory
 ) -> None:
     """Пароль такой записи проверяет каталог — локально подобрать его нельзя."""
     await client.post("/api/v1/users/sync-directory", headers=admin_headers)

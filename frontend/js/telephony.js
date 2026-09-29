@@ -18,7 +18,7 @@
  *
  * Связь с app.js — события dds:card-open / dds:card-close / dds:review-open /
  * dds:review-close / dds:callback / dds:operator-status и объект window.DDS.
- * Рабочее место: session.workstation, ?ws=ws02 в адресе (запоминается) или ws01.
+ * Рабочее место выбирается при входе (session.workstation); ?ws=ws02 — только без входа по месту.
  */
 (function () {
   "use strict";
@@ -240,7 +240,6 @@
           <button type="button" data-mode="browser" title="Звонок прямо со страницы: микрофон и динамики компьютера">В браузере</button>
           <button type="button" data-mode="sip" title="Голос через софтфон / IP-телефон рабочего места">Софтфон</button>
         </div>
-        <button type="button" class="tel-btn" data-el="change" title="Сменить рабочее место">⇄ Место</button>
       </div>
     </div>`;
   document.body.appendChild(widget);
@@ -336,14 +335,6 @@
       }, 320);
     }
   }
-  el.change.addEventListener("click", () => {
-    const next = prompt("SIP-аккаунт рабочего места (ws01…ws20):", WS);
-    if (next && next.trim() && next.trim() !== WS) {
-      const url = new URL(location.href);
-      url.searchParams.set("ws", next.trim());
-      location.href = url.toString();
-    }
-  });
 
   // ------------------------------------------- справочник номеров (всплывающее окно) ---
   const EMERGENCY = [

@@ -7,26 +7,18 @@ from httpx import AsyncClient
 
 from app.core.security import hash_password, utcnow
 from app.db.session import SessionFactory
-from app.integrations.directory import StubDirectoryClient, set_directory_client
 from app.models.audit import AuditLog
 from app.models.enums import AuditAction, CardLifecycleStatus, ResponseStatus, UserStatus
 from app.models.training import CardAttempt
 from app.models.user import User
 
 
-class _PermissiveDirectory(StubDirectoryClient):
-    """Каталог, принимающий пароль, — чтобы проверить путь успешного входа."""
-
-    name = "test-directory"
-
-    async def authenticate(self, username: str, password: str):
-        return {"username": username} if password == "Directory#2026" else None
-
-
-async def test_directory_login_respects_second_factor(client: AsyncClient, admin_headers) -> None:
+async def test_directory_login_respects_second_factor(
+    client: AsyncClient, admin_headers, directory
+) -> None:
     """Вход через каталог не должен обходить второй фактор (п.2.3 ТЗ)."""
     await client.post("/api/v1/users/sync-directory", headers=admin_headers)
-    set_directory_client(_PermissiveDirectory())
+    directory.password = "Directory#2026"
     try:
         async with SessionFactory() as session:
             user = (
@@ -45,7 +37,6 @@ async def test_directory_login_respects_second_factor(client: AsyncClient, admin
         assert "mfa_token" in body, "Должен запрашиваться код второго фактора"
         assert "access_token" not in body, "Токен доступа до второго фактора выдавать нельзя"
     finally:
-        set_directory_client(None)
         async with SessionFactory() as session:
             user = (
                 await session.execute(sa.select(User).where(User.username == "ivanov.dds"))
@@ -211,7 +202,7 @@ async def test_accepted_card_without_completion_becomes_unfinished(
         assert attempt.lifecycle_status is CardLifecycleStatus.NOT_FINISHED
 
 
-async def test_directory_dry_run_changes_nothing(client: AsyncClient, admin_headers) -> None:
+async def test_directory_dry_run_changes_nothing(client: AsyncClient, admin_headers, directory) -> None:
     """Пробный прогон синхронизации не должен менять данные."""
     await client.post("/api/v1/users/sync-directory", headers=admin_headers)
 
@@ -273,6 +264,11 @@ async def test_student_cannot_browse_the_card_pool(
     #: Преподавателю пул по-прежнему доступен.
     allowed = await client.get("/api/v1/cards", headers=teacher_headers)
     assert allowed.status_code == 200, allowed.text
+
+    #: Эталоны и сценарии — тоже нет: иначе оператор 112 прочитал бы то, что должен выяснить у заявителя.
+    for path in ("/api/v1/cards/export?with_expected=true", "/api/v1/scenarios"):
+        leak = await client.get(path, headers=student_headers)
+        assert leak.status_code == 403, f"{path}: {leak.status_code}"
 
     #: А состав полей карточки обучающемуся нужен — форму по чему-то рисовать.
     template = await client.get("/api/v1/card-templates", headers=student_headers)

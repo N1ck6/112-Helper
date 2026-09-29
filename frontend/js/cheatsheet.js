@@ -14,7 +14,8 @@
   const session = (function () {
     try { return JSON.parse(localStorage.getItem("ddsSession") || "null") || {}; } catch (e) { return {}; }
   })();
-  if (!session.role) return;
+  // шпаргалка по регламенту 112 — обучающимся и преподавателю; у администратора задачи системные
+  if (["student", "dispatcher", "teacher"].indexOf(session.role) === -1) return;
 
   const OPERATOR = {
     title: "Оператор 112: карточка",

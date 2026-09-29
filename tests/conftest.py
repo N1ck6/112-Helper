@@ -6,9 +6,8 @@
 Если стенд не поднят, тест не падает (это не баг кода), а SKIP с
 подсказкой, какую команду запустить.
 
-Пароль AMI — из переменной AMI_PASSWORD, по умолчанию тот же дефолт,
-что в docker-compose.yml (changeme_ami_pass). Если в telephony/.env
-задан свой пароль: AMI_PASSWORD=<пароль> pytest tests/ -v
+Пароль AMI — из переменной AMI_PASSWORD, иначе из корневого .env стенда
+(его создаёт start.bat / start.sh).
 """
 
 import os
@@ -23,13 +22,22 @@ from ami_client import AMIClient, AMIError  # noqa: E402
 
 AMI_HOST = os.environ.get("AMI_HOST", "localhost")
 AMI_PORT = int(os.environ.get("AMI_PORT", "5041"))
-AMI_PASSWORD = os.environ.get("AMI_PASSWORD", "changeme_ami_pass")
+def _from_env_file(key: str) -> str:
+    env = Path(__file__).parent.parent / ".env"
+    if env.exists():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip()
+    return ""
+
+
+AMI_PASSWORD = os.environ.get("AMI_PASSWORD") or _from_env_file("AMI_PASSWORD")
 AMI_USER = "test-user"  # см. telephony/asterisk/conf/manager.conf
 
 REPO_ROOT = Path(__file__).parent.parent
 RECORDINGS_DIR = REPO_ROOT / "data" / "recordings"
 SESSIONS_LOG = REPO_ROOT / "data" / "sessions" / "sessions.log"
-START_HINT = "cd telephony && docker compose up --build -d"
+START_HINT = "start.bat / ./start.sh (или docker compose up -d из корня)"
 
 
 @pytest.fixture
