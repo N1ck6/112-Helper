@@ -56,7 +56,8 @@ class AdminService:
 
     # ------------------------------------------------------------- конфигурация
     async def list_settings(self) -> Sequence[SystemSetting]:
-        return await self.settings_repo.list_all()
+        # Служебные записи (метки seed) в интерфейсе не показываются
+        return [s for s in await self.settings_repo.list_all() if s.category != "internal"]
 
     async def upsert_setting(
         self, data: SettingUpsert, actor: User, request: Request | None = None

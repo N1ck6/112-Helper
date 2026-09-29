@@ -100,7 +100,7 @@ services:
     container_name: trainer-api
     environment:
       APP_ENV: ${APP_ENV:-local}
-      # стартовые учётные записи (seed при первом запуске); пароли меняются потом в интерфейсе
+      # стартовые учётные записи: seed применяет пароль при создании и после его смены в .env
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
       TEACHER_PASSWORD: ${TEACHER_PASSWORD:?TEACHER_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}
       STUDENT_PASSWORD: ${STUDENT_PASSWORD:?STUDENT_PASSWORD не задан в .env — запустите start.bat (Windows) или ./start.sh}

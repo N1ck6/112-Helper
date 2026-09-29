@@ -16,7 +16,7 @@ from app.core.permissions import (  # noqa: E402
     ROLE_TITLES,
     RoleCode,
 )
-from app.core.security import hash_password, utcnow  # noqa: E402
+from app.core.security import hash_password, utcnow, verify_password  # noqa: E402
 from app.db.session import session_scope  # noqa: E402
 from app.models.catalog import DutyService, TimeNorm  # noqa: E402
 from app.models.enums import (  # noqa: E402
@@ -25,9 +25,11 @@ from app.models.enums import (  # noqa: E402
     ServiceLevel,
     UserStatus,
 )
+from app.models.system import SystemSetting  # noqa: E402
 from app.models.training import Workplace  # noqa: E402
 from app.models.user import Permission, Role, StudyGroup, User  # noqa: E402
 from app.repositories.content import CategoryRepository, ScenarioRepository  # noqa: E402
+from app.repositories.system import SettingRepository  # noqa: E402
 from app.repositories.users import GroupRepository, RoleRepository, UserRepository  # noqa: E402
 from app.schemas.scenario import GenerateScenariosRequest, ScenarioApproveRequest  # noqa: E402
 from app.services.cards import CardService  # noqa: E402
@@ -35,7 +37,10 @@ from app.services.scenarios import ScenarioService  # noqa: E402
 
 #: Стартовые учётные записи. Пароли — из корневого .env (установщик генерирует случайные);
 #: значения по умолчанию — только для автотестов и разработки без Docker.
-#: Пароль задаётся при создании записи; дальше его меняет сам пользователь или администратор.
+#: Пароль из .env применяется при создании записи и при каждом его изменении в .env
+#: (метка последнего применённого значения — служебный параметр ENV_PASSWORDS_KEY).
+#: Пока значение в .env не менялось, пароль, заданный в интерфейсе, не перезаписывается.
+ENV_PASSWORDS_KEY = "seed.env_passwords"
 DEMO_USERS = [
     ("admin", "Администратов Артём Сергеевич", RoleCode.ADMIN, os.getenv("ADMIN_PASSWORD") or "Admin#2026"),
     ("teacher", "Преподавалова Мария Ивановна", RoleCode.TEACHER, os.getenv("TEACHER_PASSWORD") or "Teacher#2026"),
@@ -111,9 +116,28 @@ async def seed_permissions_and_roles(session) -> dict[str, Role]:
 
 async def seed_users(session, roles: dict[str, Role]) -> dict[str, User]:
     repo = UserRepository(session)
+    settings = SettingRepository(session)
+    marker = await settings.by_key(ENV_PASSWORDS_KEY)
+    if marker is None:
+        marker = SystemSetting(
+            key=ENV_PASSWORDS_KEY, value={}, category="internal", is_protected=True,
+            description="Хеши паролей из .env, последний раз применённых к стартовым учётным записям",
+        )
+        session.add(marker)
+    applied = dict(marker.value or {})
     users: dict[str, User] = {}
+    changed: list[str] = []
     for username, full_name, role_code, password in DEMO_USERS:
         user = await repo.by_username(username)
+        if user is not None and not (
+            applied.get(username) and verify_password(password, applied[username])
+        ):
+            # Пароль в .env изменён (или ещё не применялся) — применить его
+            user.password_hash = hash_password(password)
+            user.password_changed_at = utcnow()
+            user.failed_login_count = 0
+            user.locked_until = None
+            changed.append(username)
         if user is None:
             user = User(
                 username=username,
@@ -125,10 +149,15 @@ async def seed_users(session, roles: dict[str, Role]) -> dict[str, User]:
                 password_changed_at=utcnow(),
             )
             session.add(user)
+            applied[username] = user.password_hash
+        elif username in changed:
+            applied[username] = user.password_hash
         user.roles = [roles[str(role_code)]]
         users[username] = user
+    marker.value = applied
     await session.flush()
-    print(f"  ✓ пользователей: {len(users)} (пароли — в корневом .env)")
+    note = f"; пароль из .env применён: {', '.join(changed)}" if changed else ""
+    print(f"  ✓ пользователей: {len(users)} (пароли — в корневом .env{note})")
     return users
 
 
