@@ -57,6 +57,7 @@ printf '  admin             %s   администратор\n' "$(val ADMIN_PASS
 printf '  teacher           %s   преподаватель\n' "$(val TEACHER_PASSWORD)"
 printf '  student, student2 %s   обучающиеся\n' "$(val STUDENT_PASSWORD)"
 printf '  Софтфон рабочего места: сервер %s:%s, логин ws01…ws20, пароль %s\n' "${IP:-<IP этого ПК>}" "$(val EXTERNAL_SIGNALING_PORT)" "$(val TRAINEE_PASSWORD)"
+printf '  Настройка софтфона (UDP, логин = номер места при входе в АРМ) — README, раздел «Подключение MicroSIP»\n'
 case "$(val COMPOSE_PROFILES)" in
   *llm*) printf '\nМодель ИИ (%s) и голоса при первом запуске докачиваются в фоне;\n' "$(val LLM_MODEL)"
          printf 'до этого проверка грамотности и рассказы заявителей идут по правилам. Ход: docker compose logs -f ollama-init voice-service\n' ;;

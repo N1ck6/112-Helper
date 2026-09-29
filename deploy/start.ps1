@@ -79,6 +79,7 @@ Write-Host ("  admin            {0}   администратор" -f $envValues[
 Write-Host ("  teacher          {0}   преподаватель" -f $envValues["TEACHER_PASSWORD"])
 Write-Host ("  student, student2 {0}  обучающиеся" -f $envValues["STUDENT_PASSWORD"])
 Write-Host ("  Софтфон рабочего места: сервер ${ip}:{0}, логин ws01…ws20, пароль {1}" -f $envValues["EXTERNAL_SIGNALING_PORT"], $envValues["TRAINEE_PASSWORD"])
+Write-Host "  Настройка MicroSIP (UDP, логин = номер места при входе в АРМ) — README, раздел «Подключение MicroSIP»"
 if ($envValues["COMPOSE_PROFILES"] -match "llm") {
     Write-Host "`nМодель ИИ ($($envValues['LLM_MODEL'])) и голоса при первом запуске докачиваются в фоне;"
     Write-Host "до этого проверка грамотности и рассказы заявителей идут по правилам. Ход: docker compose logs -f ollama-init voice-service"
