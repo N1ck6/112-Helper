@@ -40,7 +40,8 @@ uvicorn app.main:app --reload
 
 Документация API: <http://localhost:8000/docs> · Метрики: <http://localhost:8000/metrics>
 
-Учебные учётные записи после `scripts.seed` (**только для локального контура**):
+Учебные учётные записи после `scripts.seed` при запуске backend **без Docker** (пароли по умолчанию;
+в стенде из корня пароли свои — `ADMIN_PASSWORD`, `TEACHER_PASSWORD`, `STUDENT_PASSWORD` в корневом `.env`):
 
 | Логин      | Пароль         | Роль                  |
 |------------|----------------|-----------------------|

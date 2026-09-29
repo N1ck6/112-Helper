@@ -18,7 +18,7 @@ import urllib.request
 
 import pytest
 
-from conftest import REPO_ROOT
+from conftest import REPO_ROOT, _from_env_file
 
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "virtual_caller"))
 
@@ -212,12 +212,12 @@ def _login(username, password):
 
 @pytest.fixture(scope="module")
 def admin_token(stand):
-    return _login("admin", "Admin#2026")        # учебные записи backend/scripts/seed.py
+    return _login("admin", _from_env_file("ADMIN_PASSWORD"))        # пароли учётных записей — корневой .env
 
 
 @pytest.fixture(scope="module")
 def teacher_token(stand):
-    return _login("teacher", "Teacher#2026")
+    return _login("teacher", _from_env_file("TEACHER_PASSWORD"))
 
 
 def test_stand_components_ready(stand):
@@ -231,7 +231,7 @@ def test_stand_components_ready(stand):
 
 
 def test_stand_login_roles(stand):
-    status, body = _call("POST", "/api/v1/auth/login", {"username": "student", "password": "Student#2026"})
+    status, body = _call("POST", "/api/v1/auth/login", {"username": "student", "password": _from_env_file("STUDENT_PASSWORD")})
     assert status == 200
     status, me = _call("GET", "/api/v1/auth/me", token=body["access_token"])
     assert status == 200 and me["roles"] == ["student"]

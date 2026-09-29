@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import httpx
 
 DEFAULT_API = "http://localhost:8000"
+ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
+
+
+def _env_value(key: str) -> str:
+    """Значение из корневого .env стенда (его создаёт start.bat / start.sh)."""
+    if ROOT_ENV.exists():
+        for line in ROOT_ENV.read_text(encoding="utf-8").splitlines():
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip()
+    return ""
 TIMEOUT = 10.0
 
 OK = "  [ OK ]"
@@ -120,7 +131,8 @@ def main() -> None:
     parser.add_argument("--frontend", default="http://localhost:8080", help="Проверка веб-интерфейса")
     parser.add_argument("--full", action="store_true", help="Требовать все компоненты комплекса")
     parser.add_argument("--user", default="teacher", help="Учётная запись для сквозной проверки")
-    parser.add_argument("--password", default="Teacher#2026")
+    parser.add_argument("--password", default=_env_value("TEACHER_PASSWORD") or "Teacher#2026",
+                        help="по умолчанию — TEACHER_PASSWORD из корневого .env стенда")
     args = parser.parse_args()
 
     print("Проверка учебного комплекса ДДС-112\n")
