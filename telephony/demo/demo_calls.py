@@ -3,7 +3,7 @@
 Реплики «диспетчера» заранее синтезируются голосом Irina (voice-service, женский
 голос) в data/tts/operator_9XXX.wav; имитация рабочего места Local/9XXX@autotest
 (extensions.conf) проигрывает их в звонок. Собеседники отвечают голосом по своей
-категории (Dmitri — мужчины, Irina — женщины), реплики — из ML (mocks или настоящий).
+категории (Dmitri — мужчины, Irina — женщины), реплики — из ML-сервиса.
 
     python telephony/demo/demo_calls.py                  # все сценарии по очереди
     python telephony/demo/demo_calls.py dispatch report  # выбранные

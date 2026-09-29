@@ -5,7 +5,7 @@ from .base import EngineNotReady, TTSEngine, TTSResult
 
 __all__ = ["EngineNotReady", "TTSEngine", "TTSResult", "create_tts", "TTS_ENGINES"]
 
-TTS_ENGINES = ("piper", "mock")
+TTS_ENGINES = ("silero", "piper", "mock")
 
 
 def create_tts(settings: Settings) -> TTSEngine:
@@ -13,6 +13,11 @@ def create_tts(settings: Settings) -> TTSEngine:
     if name == "mock":
         from .mock import MockTTS
         return MockTTS()
+    if name == "silero":
+        from .silero_engine import SileroTTS
+        groups = settings.silero_groups()
+        return SileroTTS(model=settings.silero_model, models_dir=settings.models_dir,
+                         female=groups["female"], male=groups["male"], threads=settings.silero_threads)
     if name == "piper":
         from .piper_engine import PiperTTS
         return PiperTTS(voice=settings.piper_voice, models_dir=settings.models_dir,

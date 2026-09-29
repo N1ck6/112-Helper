@@ -157,6 +157,12 @@ class AMIClient:
         if resp.get("Response") != "Success":
             raise AMIError(resp.get("Message", "Hangup не выполнен"))
 
+    def stop_playback(self, channel: str) -> bool:
+        """Прервать реплику собеседника, которая сейчас звучит в канале (перебивание)."""
+        with self.connect() as ami:
+            resp = ami.request("ControlPlayback", [("Channel", channel), ("Control", "stop")])
+        return resp.get("Response") == "Success"
+
     def channel_alive(self, channel: str) -> bool:
         """Канал ещё существует (разговор не закончен) — для номеров без AGI (эхо-тест)."""
         with self.connect() as ami:

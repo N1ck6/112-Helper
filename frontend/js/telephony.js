@@ -409,8 +409,16 @@
     if (e.key === "Escape" && !pop.hidden) openBook(false);
   });
 
+<<<<<<< HEAD
   // без телефонии справочник стенда — встроенный в браузерный телефон
   if (web) standNumbers = web.directory().map((c) => ({ number: c.number, title: c.service, name: c.name }));
+=======
+  // без телефонии справочник стенда — встроенная копия из js/webphone.js; нужна и там, где
+  // синтеза речи нет (встроенный браузер VS Code и др.), поэтому не через `web`
+  if (window.DDS_WEBPHONE) {
+    standNumbers = window.DDS_WEBPHONE.directory().map((c) => ({ number: c.number, title: c.service, name: c.name }));
+  }
+>>>>>>> origin/main
   api("GET", "/numbers").then((list) => {
     if (Array.isArray(list) && list.length) standNumbers = list;
   }).catch(() => {});
@@ -641,6 +649,11 @@
     if (!opts.card && card) opts.card = currentCard();
     // голосовой заявитель 112 — сценарий, назначенный карточке преподавателем
     if (opts.call_type === "incident_112" && card && card.incident && card.incident.scenarioId) opts.scenario_id = card.incident.scenarioId;
+<<<<<<< HEAD
+=======
+    // занятие на сервере: заявитель говорит по карточке Backend (её содержание браузер не видит)
+    if (opts.call_type === "incident_112" && card && card.incident && card.incident.server) opts.attempt_id = card.incident.server.attemptId;
+>>>>>>> origin/main
     web.start(opts, {
       emit: (type, d) => { if (handlers[type]) handlers[type](d); },
       onListen: (on) => {
@@ -781,6 +794,14 @@
     voice.textContent = "☎ Вызов голосом";
     voice.title = "Учебный заявитель позвонит на телефон рабочего места";
     voice.addEventListener("click", () => {
+      const onServer = card && card.incident && card.incident.server;
+      if (onServer && !useBrowser()) {
+        // при выдаче карточки Backend сам звонит заявителем на телефон рабочего места
+        setOpen(true);
+        el.state.textContent = "Заявитель звонит на телефон рабочего места при выдаче карточки. Нет софтфона — режим «В браузере».";
+        return;
+      }
+      if (onServer) return placeCall({ call_type: "incident_112", card: sheetCard() }, "Вызов 112");
       const n = parseInt(String((card && card.id) || "").replace(/\D/g, ""), 10) || 1;
       placeCall({ call_type: "incident_112", scenario_id: SCENARIOS_112[(n - 1) % SCENARIOS_112.length],
                   card: sheetCard() }, "Вызов 112");

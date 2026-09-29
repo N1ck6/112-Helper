@@ -1,12 +1,13 @@
 FROM python:3.11-slim
 
-# ffmpeg — ресемплинг TTS 22050 -> 8000 Гц для Asterisk.
+# ffmpeg — ресемплинг TTS (Piper 22050 Гц) -> 8000 Гц для Asterisk.
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Silero TTS работает на PyTorch: только CPU-сборка (без CUDA — в разы меньше образ)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu     && pip install --no-cache-dir -r requirements.txt
 
 COPY voice ./voice
 COPY download_models.py .

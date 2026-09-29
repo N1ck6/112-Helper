@@ -6,6 +6,7 @@ Persona — кто говорит «с той стороны»: имя, долж
 """
 
 import json
+import zlib
 from pathlib import Path
 
 # Типы учебных звонков
@@ -44,6 +45,17 @@ def guess_gender(full_name: str | None, default: str = "female") -> str:
 
 def voice_for(persona: dict | None) -> str:
     return "male" if (persona or {}).get("gender") == "male" else "female"
+
+
+def tts_voice(persona: dict | None) -> str:
+    """Голос синтеза: пол + номер тембра по имени собеседника («female-37»).
+
+    voice-service выбирает голос категории по номеру: у каждого собеседника свой тембр,
+    и один и тот же человек звучит одинаково во всех звонках.
+    """
+    gender = voice_for(persona)
+    key = (persona or {}).get("name") or (persona or {}).get("id") or ""
+    return f"{gender}-{zlib.crc32(key.encode('utf-8')) % 100}" if key else gender
 
 
 class Directory:

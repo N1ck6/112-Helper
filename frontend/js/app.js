@@ -1,6 +1,8 @@
 (function () {
   const D = window.DDS_DATA;
   const API = window.DDS_API;
+  // Вход через Backend: карточки, занятия и оценки — на сервере (js/server.js). Иначе — демо в браузере.
+  const SERVER = window.DDS_SERVER && window.DDS_SERVER.enabled ? window.DDS_SERVER : null;
 
   const ROLE_LABELS = {
     student: "Оператор",
@@ -206,6 +208,7 @@
   }
 
   function loadIncidents() {
+    if (SERVER) return [];
     try {
       const raw = localStorage.getItem("ddsIncidents");
       if (raw) return JSON.parse(raw).map(normalize);
@@ -216,6 +219,7 @@
   }
 
   function saveIncidents() {
+    if (SERVER) return;   // данные хранит Backend
     localStorage.setItem("ddsIncidents", JSON.stringify(incidents));
     API.syncIncidents(incidents);
   }
@@ -252,8 +256,11 @@
   };
 
   function tabsFor(role) {
-    const extra = (window.DDS_TABS || []).filter((t) => t.roles.indexOf(role) !== -1);
-    return TOOLBARS[role].tabs.concat(extra).sort((a, b) => a.order - b.order);
+    let extra = (window.DDS_TABS || []).filter((t) => t.roles.indexOf(role) !== -1);
+    // серверные вкладки (server: true) заменяют демо-вкладки с тем же id; без Backend — наоборот
+    extra = extra.filter((t) => (SERVER ? !extra.some((o) => o !== t && o.id === t.id && o.server) : !t.server));
+    const own = TOOLBARS[role].tabs.filter((t) => !extra.some((o) => o.id === t.id));
+    return own.concat(extra).sort((a, b) => a.order - b.order);
   }
 
   let activeTab = tabsFor(session.role)[0].id;
@@ -283,8 +290,11 @@
       )
       .join("");
 
-    const primaryHtml = config.primary
-      ? `<button type="button" class="btn-primary" data-action="${config.primary.action}">${config.primary.label}</button>`
+    const primary = SERVER && config.primary
+      ? { action: config.primary.action, label: session.role === "student" ? "Принять вызов" : "Следующая карточка" }
+      : config.primary;
+    const primaryHtml = primary
+      ? `<button type="button" class="btn-primary" data-action="${primary.action}">${primary.label}</button>`
       : "";
 
     toolbar.innerHTML = `${tabsHtml}<span class="toolbar-spacer"></span>${primaryHtml}`;
@@ -305,6 +315,12 @@
   }
 
   function createOperatorCard() {
+    if (SERVER) {
+      SERVER.nextCall()
+        .then((call) => { renderWorkspace(); openSheet(call); })
+        .catch((e) => showToast(e.message));
+      return;
+    }
     const now = new Date();
     const mineCount = incidents.filter((c) => c.source !== "system" && c.workstation === session.workstation && String(c.id).charAt(0) === "m").length;
     const sc = scenarioFor(session.workstation, mineCount);
@@ -316,16 +332,31 @@
     openSheet(call);
   }
 
+  // Главная служба типа из классификатора происшествий (ЕКП) -> служба в списке оповещения АРМ
+  const EKP_SERVICE = {
+    MCHS: "Служба 101 (МЧС)", Police: "Служба 102 (ОМВД)", AMBULANCE: "Служба 103 (СМП)", MOSGAZ: "Служба 104 (Мосгаз)",
+    MOSVODOCANAL: "Мосводоканал", GKH: "ГБУ «Жилищник»", ZODD: "ЦОДД", MOSGORTRANS: "Мосгортранс", GORMOST: "ГБУ «Гормост»",
+  };
+  const ekpTypes = {};   // тип из классификатора -> главная служба (поиск «Что случилось?» в серверном режиме)
+
   function servicesForTypes(types) {
     const set = [];
     types.forEach((id) => {
       const t = INCIDENT_TYPES.find((x) => x.id === id);
       if (t) t.services.forEach((s) => set.indexOf(s) === -1 && set.push(s));
+      String(ekpTypes[id] || "").split(",").map((c) => EKP_SERVICE[c.trim()]).filter(Boolean)
+        .forEach((s) => set.indexOf(s) === -1 && set.push(s));
     });
     return set;
   }
 
   function simulateIncoming() {
+    if (SERVER) {
+      SERVER.nextCard()
+        .then((call) => { showToast("Поступила карточка № " + call.number + ": на приём " + D.TIMERS.accept + " с"); renderWorkspace(); })
+        .catch((e) => showToast(e.message));
+      return;
+    }
     const pool = poolFor(session.workstation);
     if (!pool.length) {
       showToast("Нет утверждённых сценариев — утвердите сценарий у преподавателя");
@@ -405,6 +436,10 @@
   }
 
   function statusPill(call) {
+    if (call.status === "graded" && call.evaluation) {
+      const ev = call.evaluation;
+      return `<span class="status-pill ${ev.passed ? "status-done" : "status-blocked"}">Оценка ${Math.round(ev.score)} · ${ev.passed ? "зачтено" : "не зачтено"}</span>`;
+    }
     if (call.status === "empty") return `<span class="cell-muted">${call.emptyReason === "no_contact" ? "Нет контакта" : "Срыв звонка"}</span>`;
     if (call.status === "review") {
       const st = ddsState(call);
@@ -470,6 +505,13 @@
     const workspace = document.getElementById("workspace");
     const role = session.role;
 
+    const serverTab = SERVER && (window.DDS_TABS || []).find((t) => t.server && t.id === activeTab && t.roles.indexOf(role) !== -1);
+    if (serverTab) {
+      workspace.innerHTML = serverTab.render(window.DDS);
+      if (serverTab.wire) serverTab.wire(workspace, window.DDS);
+      return;
+    }
+
     if (role === "student" && activeTab === "queue") {
       workspace.innerHTML = renderOperatorQueue();
       wireOperatorQueue();
@@ -526,7 +568,7 @@
 
     const rows = mine
       .map((call, i) => {
-        const canEdit = call.status === "new" || (call.status === "review" && call.dds.decision === "declined");
+        const canEdit = call.status === "new" || (!SERVER && call.status === "review" && call.dds.decision === "declined");
         const actionBtn = canEdit
           ? `<button type="button" class="row-action" data-row-open data-id="${call.id}">Открыть</button>`
           : `<button type="button" class="row-action" data-row-open data-view-id="${call.id}">Просмотр</button>`;
@@ -540,7 +582,7 @@
     return `
       <div class="panel-head">
         <h2>Очередь вызовов</h2>
-        <span class="count">${clusterProgress() ? clusterProgress() + " · " : ""}Требуют заполнения: ${openCount}</span>
+        <span class="count">${SERVER ? esc(SERVER.banner()) + " · " : clusterProgress() ? clusterProgress() + " · " : ""}Требуют заполнения: ${openCount}</span>
       </div>
       <div class="data-table-wrap">
         <table class="data-table">
@@ -593,11 +635,11 @@
     return `
       <div class="panel-head">
         <h2>Поток карточек</h2>
-        <span class="count">${clusterProgress() ? clusterProgress() + " · " : ""}В работе: ${pending.length}</span>
+        <span class="count">${SERVER ? esc(SERVER.banner()) + " · " : clusterProgress() ? clusterProgress() + " · " : ""}В работе: ${pending.length}</span>
       </div>
       <p class="empty-hint" style="padding:0 0 12px;">На решение «Принята / Не принята» даётся ${D.TIMERS.accept} с, иначе карточка получает статус «Не оповещено». После приёма — ${D.TIMERS.respond / 60} мин на следующий статус реагирования, иначе «Не завершено».</p>
       <div class="data-table-wrap">
-        ${pending.length ? `<table class="data-table"><thead><tr><th>№</th><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Адрес</th><th>Приём</th><th>Реагирование</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty-hint">Поток пуст. Нажмите «Смоделировать поступление» или дождитесь карточек от операторов.</div>`}
+        ${pending.length ? `<table class="data-table"><thead><tr><th>№</th><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Адрес</th><th>Приём</th><th>Реагирование</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty-hint">${SERVER ? "Поток пуст. Карточки поступают по ходу занятия; «Следующая карточка» — взять сразу." : "Поток пуст. Нажмите «Смоделировать поступление» или дождитесь карточек от операторов."}</div>`}
       </div>`;
   }
 
@@ -767,8 +809,37 @@
         else selectedTypes.splice(idx, 1);
         typesField.classList.remove("has-error");
         applyTypes();
+        if (SERVER) SERVER.action(currentCall, "classified");
       });
     });
+
+    // серверный режим: поиск по полному классификатору происшествий (ML), как в АРМ-112 («пож», «тран»)
+    const ekpBox = document.createElement("div");
+    ekpBox.className = typeTilesEl.className;
+    typeTilesEl.after(ekpBox);
+    let ekpTimer = null;
+    ekpBox.addEventListener("click", (e) => {
+      const btn = e.target.closest(".type-tile");
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const idx = selectedTypes.indexOf(id);
+      if (idx === -1) selectedTypes.push(id);
+      else selectedTypes.splice(idx, 1);
+      btn.classList.toggle("selected", idx === -1);
+      typesField.classList.remove("has-error");
+      applyTypes();
+      if (SERVER) SERVER.action(currentCall, "classified");
+    });
+    function searchEkp(query) {
+      const url = (window.APP_CONFIG || {}).ML_TYPES_URL;
+      if (!SERVER || !url || query.length < 3) { ekpBox.innerHTML = ""; return; }
+      fetch(url + "?limit=12&q=" + encodeURIComponent(query)).then((r) => r.json()).then((list) => {
+        ekpBox.innerHTML = (Array.isArray(list) ? list : []).map((t) => {
+          ekpTypes[t.incident_type] = t.main_service || "";
+          return `<button type="button" class="type-tile ${selectedTypes.indexOf(t.incident_type) !== -1 ? "selected" : ""}" data-id="${esc(t.incident_type)}" style="--tile-color:var(--cat-other)" title="${esc(t.category || "")}">${esc(t.incident_type)}</button>`;
+        }).join("");
+      }).catch(() => { ekpBox.innerHTML = ""; });
+    }
 
     typeSearchInput.addEventListener("input", () => {
       const query = typeSearchInput.value.trim().toLowerCase();
@@ -776,6 +847,8 @@
         const matches = btn.textContent.toLowerCase().includes(query);
         btn.classList.toggle("hidden-by-search", query.length > 0 && !matches);
       });
+      clearTimeout(ekpTimer);
+      ekpTimer = setTimeout(() => searchEkp(query), 250);
     });
 
     injuredField.querySelectorAll(".flag-pill[data-flag]").forEach((btn) => {
@@ -798,7 +871,10 @@
       if (e.key === "Escape" && overlay.classList.contains("is-open")) closeSheet();
     });
 
-    addressInput.addEventListener("input", () => addressField.classList.remove("has-error"));
+    addressInput.addEventListener("input", () => {
+      addressField.classList.remove("has-error");
+      if (SERVER) SERVER.action(currentCall, "field_filled", "address_street");
+    });
     callerInput.addEventListener("input", () => callerField.classList.remove("has-error"));
     callerStatusSelect.addEventListener("change", () => callerStatusField.classList.remove("has-error"));
     descriptionInput.addEventListener("input", () => {
@@ -834,6 +910,7 @@
     if (!confirm(`Сохранить карточку со статусом «${label}» без заполнения остальных полей?`)) return;
     currentCall.status = "empty";
     currentCall.emptyReason = reason;
+    if (SERVER && currentCall.server) SERVER.skip(currentCall).catch((e) => showToast(e.message));
     API.log("card_empty", `Карточка № ${currentCall.number}: ${label}`);
     showToast(`Карточка сохранена · ${label}`);
     saveIncidents();
@@ -903,7 +980,8 @@
     });
 
     if (selectedTypes.length === 1) {
-      titleEl.textContent = INCIDENT_TYPES.find((t) => t.id === selectedTypes[0]).label;
+      const known = INCIDENT_TYPES.find((t) => t.id === selectedTypes[0]);
+      titleEl.textContent = known ? known.label : selectedTypes[0];
     } else if (selectedTypes.length > 1) {
       titleEl.textContent = `Происшествие (${selectedTypes.length} типа)`;
     } else {
@@ -1004,6 +1082,18 @@
     currentCall.services = finalServices;
     currentCall.fillSeconds = secondsElapsed;
     currentCall.workstation = session.workstation || currentCall.workstation;
+    if (SERVER && currentCall.server) {
+      const call = currentCall;
+      closeSheet();
+      showToast("Карточка сохранена, идёт оценка…");
+      SERVER.submit(call, typeLabels(call) || [])
+        .then((res) => {
+          showToast(`Карточка № ${call.number}: оценка ${Math.round(res.score)} из 100 · ${res.passed ? "зачтено" : "не зачтено"}`);
+          renderWorkspace();
+        })
+        .catch((e) => showToast("Не удалось сохранить: " + e.message));
+      return;
+    }
     currentCall.status = "review";
     currentCall.sentAt = Date.now();
     currentCall.dds = newDds();
@@ -1133,6 +1223,22 @@
     call.dds.history.push({ id: id, label: label, time: hhmm(), comment: comment || null });
   }
 
+  function serverRespond(call, status, comment) {
+    SERVER.respond(call, status, comment)
+      .then(({ card, result }) => {
+        reviewComment.value = "";
+        if (result.card_closed) {
+          showToast(`Карточка № ${card.number} закрыта · оценка ${Math.round(result.score || 0)} из 100`);
+          closeReviewSheet();
+        } else {
+          showToast(status === "declined" ? "Не принята: причина записана" : reactionLabel(status) || "Принята");
+          if (currentReviewCall && currentReviewCall.id === card.id) fillReview(card, true);
+        }
+        renderWorkspace();
+      })
+      .catch((e) => showToast(e.message));
+  }
+
   function decide(kind) {
     const call = currentReviewCall;
     if (!call || call.dds.decision !== "pending") return;
@@ -1142,6 +1248,7 @@
       showToast("Комментарий обязателен: укажите причину и кому передана информация");
       return;
     }
+    if (SERVER && call.server) return serverRespond(call, kind, comment);
     call.dds.decision = kind;
     call.dds.decisionAt = Date.now();
     call.dds.comment = comment || null;
@@ -1173,6 +1280,7 @@
     } else if (order.indexOf(id) !== cur + 1) {
       return;
     }
+    if (SERVER && call.server) return serverRespond(call, id, comment);
     call.dds.reaction = id;
     call.dds.reactionAt = Date.now();
     pushHistory(call, id, reactionLabel(id), comment);
@@ -1260,6 +1368,10 @@
   }
 
   function openReviewSheet(call, allowActions) {
+    if (SERVER && call.server && !call.server.fresh) {
+      call.server.fresh = true;
+      SERVER.loadCard(call).then((c) => { if (currentReviewCall && currentReviewCall.id === c.id) fillReview(c, currentReviewAllow); }).catch(() => {});
+    }
     currentReviewCall = call;
     fillReview(call, !!allowActions);
     reviewOverlay.hidden = false;
@@ -1380,6 +1492,7 @@
   renderTopbar();
   renderToolbar();
   renderWorkspace();
+  if (SERVER) SERVER.onChange(() => { if (["queue", "stream", "history"].indexOf(activeTab) !== -1) renderWorkspace(); });
   startClock();
   initSheet();
   initReviewSheet();
@@ -1404,6 +1517,7 @@
   document.getElementById("logout-btn").addEventListener("click", () => {
     API.log("logout", "Выход из системы");
     API.dropSession(session.sid);
+    if (SERVER) API.request("POST", "/auth/logout").catch(() => {});
     localStorage.removeItem("ddsSession");
     window.location.href = "index.html";
   });

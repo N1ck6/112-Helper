@@ -1,7 +1,7 @@
 """HTTP-клиенты внешних сервисов: voice-service (STT/TTS) и ML (реплики абонента).
 
-Контракты — telephony/API.md. Реализация ML может быть настоящей или mock
-(telephony/mocks) — virtual-caller видит только ML_API_URL.
+Контракты — telephony/API.md. Реплики собеседников даёт ML-сервис (ml/integration),
+virtual-caller видит только ML_API_URL.
 """
 
 import json

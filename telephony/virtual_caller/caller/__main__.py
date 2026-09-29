@@ -49,12 +49,13 @@ def main() -> None:
     registry = CallRegistry()
     contexts = TraineeContexts()
     directory = Directory.load(s.directory_path)
-    events = EventSink(s.sessions_log_path, s.backend_url)
+    events = EventSink(s.sessions_log_path, s.backend_url, fmt=s.backend_events_format, token=s.backend_token,
+                       backend_ids=lambda call_id: getattr(registry.get(call_id), "backend", None))
     voice = VoiceClient(s.voice_service_url, s.http_timeout_sec)
+    ami = AMIClient(s.ami_host, s.ami_port, s.ami_user, s.ami_password)
     runner = DialogueRunner(s, voice, DialogueClient(s.ml_api_url, s.http_timeout_sec), events, registry,
-                            directory, contexts)
-    control = CallControl(s, registry, events, AMIClient(s.ami_host, s.ami_port, s.ami_user, s.ami_password),
-                          voice, directory, contexts)
+                            directory, contexts, ami=ami)
+    control = CallControl(s, registry, events, ami, voice, directory, contexts)
 
     agi_server = make_agi_server(runner, s.agi_host, s.agi_port)
     api_server = make_api_server(control, s.api_host, s.api_port)

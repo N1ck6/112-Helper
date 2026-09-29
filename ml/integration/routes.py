@@ -1,0 +1,108 @@
+"""Маршруты интеграции ML-сервиса с телефонией и Backend.
+
+Подключаются в api.py одной строкой (app.include_router), основная логика ML не меняется.
+
+    POST /dialogue/turn                 реплика виртуального собеседника (telephony/API.md §3)
+    GET  /dialogue/health               движок реплик и сценарии 112
+    GET  /incident-types?q=             поиск по классификатору происшествий (поле «Что случилось?»)
+    POST /api/v1/generate/scenarios     генерация сценариев по классификатору (backend INTEGRATION.md §1)
+    POST /api/v1/evaluate/attempt       оценка ответа по сценарию ML
+    POST /api/v1/analyze/grammar        проверка грамотности текста — локальная LLM
+    POST /api/v1/recommendations        рекомендации по ошибкам — локальная LLM
+    POST /api/v1/generate/correct       } пока не реализованы в ML -> 501,
+    POST /api/v1/analytics/summary      } backend считает по своим правилам
+    POST /api/v1/knowledge/index        }
+Нет LLM (без профиля llm) — методы LLM тоже отвечают 501.
+"""
+
+import logging
+from typing import Any, Callable, Dict
+
+from fastapi import APIRouter, Body, HTTPException
+
+from . import backend_contract, dialogue, llm
+
+log = logging.getLogger("ml.integration")
+
+NOT_IMPLEMENTED = ("generate/correct", "analytics/summary", "knowledge/index")
+
+
+def build_router(classifier_data: Any, classify: Callable[[str], Dict[str, Any]]) -> APIRouter:
+    router = APIRouter(tags=["Интеграция: телефония и Backend"])
+    scenarios = dialogue.load_scenarios()
+    talk_llm = dialogue.LLMConfig.from_env()
+    log.info("реплики собеседников: %s, сценарии 112: %s",
+             f"LLM {talk_llm.model} @ {talk_llm.api_url}" if talk_llm else "правила", ", ".join(sorted(scenarios)))
+
+    @router.post("/dialogue/turn")
+    def dialogue_turn(req: Dict[str, Any] = Body(...)):
+        try:
+            reply = dialogue.next_turn(req, scenarios, talk_llm)
+        except dialogue.DialogueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        log.info("dialogue %s call_id=%s turn=%s -> end=%s [%s]", req.get("call_type"), req.get("call_id"),
+                 req.get("turn"), reply["end_call"], reply.get("engine"))
+        return reply
+
+    @router.get("/dialogue/health")
+    def dialogue_health():
+        return {"status": "ok", "engine": f"llm:{talk_llm.model}" if talk_llm else "rules", "scenarios": sorted(scenarios)}
+
+    @router.post("/api/v1/generate/scenarios")
+    def generate_scenarios(payload: Dict[str, Any] = Body(...)):
+        try:
+            return backend_contract.generate_scenarios(payload, classifier_data, classify)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/api/v1/evaluate/attempt")
+    def evaluate_attempt(payload: Dict[str, Any] = Body(...)):
+        try:
+            return backend_contract.evaluate_attempt(payload)
+        except backend_contract.NotImplementedByML as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    incidents = [i for i in (classifier_data.get("incidents") or []) if i.get("incident_type")]
+
+    @router.get("/incident-types")
+    def incident_types(q: str = "", limit: int = 20):
+        """Поиск по классификатору происшествий (поле «Что случилось?» АРМ): все слова запроса
+        как части слов в типе, типе ЕКП-35, группе или категории — как поиск «пож», «тран» в АРМ-112."""
+        words = [w for w in q.lower().split() if w]
+        found = []
+        for inc in incidents:
+            hay = " ".join(str(inc.get(k) or "") for k in ("incident_type", "ekp35_type", "group", "category")).lower()
+            if all(w in hay for w in words):
+                found.append({"number": inc.get("number"), "incident_type": inc.get("incident_type"),
+                              "category": inc.get("category"), "group": inc.get("group"),
+                              "main_service": inc.get("main_service")})
+                if len(found) >= max(1, min(limit, 50)):
+                    break
+        return found
+
+    @router.post("/api/v1/analyze/grammar")
+    def check_grammar(payload: Dict[str, Any] = Body(...)):
+        try:
+            return llm.check_grammar(str(payload.get("text") or ""))
+        except llm.LLMUnavailable as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+    @router.post("/api/v1/recommendations")
+    def recommendations(payload: Dict[str, Any] = Body(...)):
+        try:
+            return llm.recommendations(payload)
+        except llm.LLMUnavailable as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+    for path in NOT_IMPLEMENTED:
+        router.add_api_route(f"/api/v1/{path}", _not_implemented(path), methods=["POST"])
+
+    return router
+
+
+def _not_implemented(path: str):
+    def handler(_: Dict[str, Any] = Body(default={})):
+        raise HTTPException(status_code=501, detail=f"/api/v1/{path} пока не реализован в ML-сервисе")
+    return handler

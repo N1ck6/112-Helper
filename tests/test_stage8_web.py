@@ -17,16 +17,17 @@ import threading
 import time
 import urllib.request
 
+import re
+
 import pytest
 
 from conftest import REPO_ROOT
 
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "virtual_caller"))
-sys.path.insert(0, str(REPO_ROOT / "telephony" / "mocks"))
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "voice_service"))
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "demo"))
 
-import ml_dialogue  # noqa: E402
+from fakes import ml_dialogue  # noqa: E402
 from caller.calls import CallRegistry, TraineeContexts  # noqa: E402
 from caller.directory import Directory  # noqa: E402
 from caller.events import EventSink  # noqa: E402
@@ -228,7 +229,7 @@ def test_integration_every_service_number_answers(stand):
         surname = c["name"].split()[0]
         ok = (call["reason"] == "completed" and callers and surname in callers[0] and "слушаю" in callers[0]
               and callers[-1] == c["accept"])
-        voices = {t["audio"].split("cache_")[1].split("_")[0] for t in call["transcript"]
+        voices = {t["audio"].split("cache_")[1].split("_")[0].split("-")[0] for t in call["transcript"]
                   if t["role"] == "caller" and t.get("audio")}
         if not ok or voices != {c["gender"]}:
             bad[number] = (call["reason"], callers, voices)
@@ -249,7 +250,8 @@ def test_integration_incident_112(stand, number, scenario, gender):
     assert call["reason"] == "completed", call["transcript"]
     assert _callers(call)[0] == SCENARIOS[scenario]["opening"]
     audio = [t["audio"] for t in call["transcript"] if t["role"] == "caller" and t.get("audio")]
-    assert audio and all(f"cache_{gender}_" in a for a in audio), audio
+    # имя кэша: cache_<пол>[-<тембр собеседника>]_<хэш>
+    assert audio and all(re.search(rf"cache_{gender}(-\d+)?_", a) for a in audio), audio
 
 
 @pytest.mark.parametrize("number", ["2999", "5555"])
@@ -269,7 +271,7 @@ def test_integration_web_proxy_and_frontend(stand):
             html, cache = resp.read().decode("utf-8"), resp.headers.get("Cache-Control")
     except OSError as exc:
         pytest.skip(f"frontend не запущен ({exc}): docker compose up -d (из корня)")
-    assert '<script src="js/telephony.js"></script>' in html and cache == "no-cache"
+    assert '<script src="js/telephony.js"' in html and cache == "no-cache"
     assert _http("GET", f"{WEB_URL}/telephony/health")[1]["ml"] is True
     assert len(_http("GET", f"{WEB_URL}/telephony/numbers")[1]) >= 16
     with urllib.request.urlopen(f"{WEB_URL}/js/telephony.js", timeout=5) as resp:

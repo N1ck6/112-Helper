@@ -234,3 +234,16 @@ def test_text_normalization_for_addresses():
     assert normalize_for_tts("Тверской б-р, 14") == "Тверской бульвар, 14"
     assert normalize_for_tts("Шоссейная ул., 62") == "Шоссейная улица, 62"
     assert normalize_for_tts("Помогите! Пожар.") == "Помогите! Пожар."
+
+
+def test_pick_voice_per_persona():
+    """female / male / female-<n> / имя — голос категории; у каждого собеседника свой тембр."""
+    from voice.tts.silero_engine import pick_voice
+    groups = {"female": ["baya", "kseniya", "xenia"], "male": ["aidar", "eugene"]}
+    known = {"baya", "kseniya", "xenia", "aidar", "eugene"}
+    assert pick_voice(None, groups, known, "baya") == "baya"
+    assert pick_voice("male", groups, known, "baya") == "aidar"
+    assert pick_voice("female-4", groups, known, "baya") == "kseniya"
+    assert pick_voice("male-3", groups, known, "baya") == "eugene"
+    assert pick_voice("xenia", groups, known, "baya") == "xenia"
+    assert pick_voice("robot", groups, known, "baya") == "baya"

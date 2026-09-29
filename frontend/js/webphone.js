@@ -6,7 +6,11 @@
  * (мужской / женский русский голос по справочнику).
  *
  * Логика собеседников повторяет эталон ML-заглушки телефонии
+<<<<<<< HEAD
  * (telephony/mocks/ml_dialogue.py): dispatch / report / applicant / incident_112.
+=======
+ * (ml/integration/dialogue.py): dispatch / report / applicant / incident_112.
+>>>>>>> origin/main
  * Если в config.js задан ML_DIALOGUE_URL — реплики берутся из ML
  * (контракт POST /dialogue/turn, telephony/API.md §3), при ошибке — по правилам.
  *
@@ -57,7 +61,11 @@
   }
 
   // ------------------------------------------------ правила собеседников ---
+<<<<<<< HEAD
   // Порт telephony/mocks/ml_dialogue.py: те же фразы и условия.
+=======
+  // Порт ml/integration/dialogue.py: те же фразы и условия.
+>>>>>>> origin/main
   const STOP = ["москва", "город", "улица", "проезд", "проспект", "шоссе", "бульвар", "переулок",
                 "площадь", "набережная", "корпус", "строение", "квартира", "подъезд", "район"];
   const ASK_ADDRESS = "Назовите, пожалуйста, точный адрес происшествия.";
@@ -147,6 +155,18 @@
   }
 
   async function nextTurn(call, turn, op) {
+<<<<<<< HEAD
+=======
+    // занятие на сервере: реплику заявителя готовит ML по карточке, которую подставляет Backend
+    if (call.attempt_id && window.DDS_SERVER && window.DDS_SERVER.enabled) {
+      try {
+        const data = await window.DDS_API.request("POST", "/training/attempts/" + call.attempt_id + "/dialogue", {
+          turn: turn, history: call.transcript.map((t) => ({ role: t.role, text: t.text })), operator_text: op,
+        });
+        if (data && typeof data.reply_text === "string") return data;
+      } catch (e) { /* сервер недоступен — ниже правила */ }
+    }
+>>>>>>> origin/main
     if (ML_URL) {
       try {
         const res = await fetch(ML_URL + "/dialogue/turn", {
@@ -381,6 +401,10 @@
       card: opts.card || null,
       report: opts.report || null,
       scenario_id: opts.scenario_id || "",
+<<<<<<< HEAD
+=======
+      attempt_id: opts.attempt_id || null,
+>>>>>>> origin/main
       transcript: [],
       status: "dialing",
       created_at: Date.now(),
@@ -409,7 +433,14 @@
       const name = String((call.card && call.card.caller) || "Заявитель");
       persona = { service: "Заявитель", name: name, number: (call.card && call.card.phone) || "3000", gender: genderByName(name) };
     }
+<<<<<<< HEAD
     if (type === "incident_112") {
+=======
+    if (type === "incident_112" && call.attempt_id) {
+      call.incoming = true;
+      persona = { service: "Вызов 112", name: "Заявитель", gender: "female" };
+    } else if (type === "incident_112") {
+>>>>>>> origin/main
       call.incoming = true;
       const all = D.getScenarios ? D.getScenarios() : [];
       call.scenario = all.find((s) => s.id === opts.scenario_id) || all[0] || null;

@@ -1,10 +1,10 @@
-"""Этап 6-7 — голосовой цикл, API звонков, заглушки ML/Backend.
+"""Этап 6-7 — голосовой цикл и API звонков.
 
-  * unit — без Docker: AGI-протокол, цикл диалога (фейковый канал + логика mock ML),
-           mock ML, доставка событий в mock Backend, HTTP API звонков с фейковым AMI.
+  * unit — без Docker: AGI-протокол, цикл диалога (фейковый канал + логика реплик ML-сервиса),
+           реплики заявителя 112, доставка событий, HTTP API звонков с фейковым AMI.
   * integration — к запущенному стенду: POST /calls на Local/operator@autotest
-           (имитация диспетчера из extensions.conf) -> полный разговор -> события
-           в mock Backend и непустая запись. SKIP, если стенд не поднят.
+           (имитация диспетчера из extensions.conf) -> полный разговор с ML -> события
+           в журнале sessions.log и непустая запись. SKIP, если стенд не поднят.
 
     pytest tests/test_stage6_dialogue.py -v
 """
@@ -21,13 +21,11 @@ import urllib.request
 
 import pytest
 
-from conftest import RECORDINGS_DIR, REPO_ROOT
+from conftest import RECORDINGS_DIR, REPO_ROOT, SESSIONS_LOG
 
 sys.path.insert(0, str(REPO_ROOT / "telephony" / "virtual_caller"))
-sys.path.insert(0, str(REPO_ROOT / "telephony" / "mocks"))
 
-import mock_services  # noqa: E402
-import ml_dialogue  # noqa: E402
+from fakes import SCENARIOS, EventStore, make_backend_server, make_ml_server, ml_dialogue  # noqa: E402
 from caller.agi import AGIResponse, AGISession, ChannelHungUp, parse_response  # noqa: E402
 from caller.api import CallControl, make_api_server  # noqa: E402
 from caller.calls import CallRegistry  # noqa: E402
@@ -37,8 +35,6 @@ from caller.dialogue import ML_ERROR_TEXT, DialogueRunner, trainee_from_channel 
 from caller.events import EventSink  # noqa: E402
 
 CALL_API_URL = os.environ.get("CALL_API_URL", "http://localhost:8092")
-MOCKS_URL = os.environ.get("MOCKS_URL", "http://localhost:8093")
-SCENARIOS = mock_services.load_scenarios(REPO_ROOT / "telephony" / "mocks" / "scenarios")
 
 
 def _http(method: str, url: str, data: dict | None = None, timeout: float = 10):
@@ -104,6 +100,7 @@ class FakeVoice:
         if self.tts_fails:
             raise ServiceError("tts down")
         self.synthesized.append(text)
+        voice = (voice or "").split("-")[0] or None   # тембр «female-37» -> пол
         self.voices.append(voice)
         return f"/tts/cache_{voice}_{len(self.synthesized):02d}"
 
@@ -115,7 +112,7 @@ class FakeVoice:
 
 
 class MockML:
-    """DialogueClient поверх логики mock_services без HTTP."""
+    """DialogueClient поверх логики реплик ML-сервиса без HTTP."""
 
     def __init__(self, fail=False):
         self.fail = fail
@@ -222,27 +219,27 @@ def test_trainee_from_channel():
     assert trainee_from_channel("Local/700@internal-0001;2") is None
 
 
-# ----------------------------------------------------------- mock ML ---
+# ------------------------------------------------ реплики заявителя 112 ---
 
-def test_mock_ml_conversation_flow():
+def test_caller_112_conversation_flow():
     sc = SCENARIOS["scenario_001"]
-    assert mock_services.dialogue_turn(sc, 0, [], None)["reply_text"] == sc["opening"]
+    assert ml_dialogue.dialogue_turn(sc, 0, [], None)["reply_text"] == sc["opening"]
     # закрытие без адреса — абонент сам напоминает адрес и не кладёт трубку
-    r = mock_services.dialogue_turn(sc, 1, [{"role": "caller", "text": sc["opening"]}], "Бригада выехала")
+    r = ml_dialogue.dialogue_turn(sc, 1, [{"role": "caller", "text": sc["opening"]}], "Бригада выехала")
     assert r["end_call"] is False and "Ленина" in r["reply_text"]
     # спросили адрес и сообщили о выезде -> прощание
-    r = mock_services.dialogue_turn(sc, 1, [], "Назовите адрес. Бригада уже выехала")
+    r = ml_dialogue.dialogue_turn(sc, 1, [], "Назовите адрес. Бригада уже выехала")
     assert r["end_call"] is True and r["reply_text"].endswith(sc["closing"])
 
 
-def test_mock_ml_silence_and_fallback():
+def test_caller_112_silence_and_fallback():
     sc = SCENARIOS["scenario_001"]
     history = [{"role": "caller", "text": sc["opening"]}, {"role": "operator", "text": ""}]
-    assert mock_services.dialogue_turn(sc, 1, history, "") == {"reply_text": sc["silence"], "end_call": False}
+    assert ml_dialogue.dialogue_turn(sc, 1, history, "") == {"reply_text": sc["silence"], "end_call": False}
     history += [{"role": "caller", "text": sc["silence"]}, {"role": "operator", "text": ""}]
-    assert mock_services.dialogue_turn(sc, 2, history, "")["end_call"] is True
-    assert mock_services.dialogue_turn(sc, 1, [], "бла бла")["reply_text"] == sc["fallbacks"][0]
-    assert mock_services.dialogue_turn(sc, sc["max_turns"] - 1, [], "адрес")["end_call"] is True
+    assert ml_dialogue.dialogue_turn(sc, 2, history, "")["end_call"] is True
+    assert ml_dialogue.dialogue_turn(sc, 1, [], "бла бла")["reply_text"] == sc["fallbacks"][0]
+    assert ml_dialogue.dialogue_turn(sc, sc["max_turns"] - 1, [], "адрес")["end_call"] is True
 
 
 # ----------------------------------------------------- голосовой цикл ---
@@ -302,12 +299,12 @@ def test_dialogue_max_turns(settings):
     assert runner.handle(FakeAGI()) == "max_turns"
 
 
-def test_dialogue_via_http_mock_ml(settings):
-    """Тот же цикл, но ML — настоящий HTTP mock_services."""
-    server = mock_services.make_server("127.0.0.1", 0, SCENARIOS)
+def test_dialogue_via_http_ml(settings):
+    """Тот же цикл, но ML — по HTTP (контракт POST /dialogue/turn)."""
+    server = make_ml_server()
     url = _serve(server)
     try:
-        ml = DialogueClient(f"{url}/ml", timeout=5)
+        ml = DialogueClient(url, timeout=5)
         runner, _ = _runner(settings, FakeVoice(["Адрес? Бригада выехала"]), ml)
         assert runner.handle(FakeAGI()) == "completed"
     finally:
@@ -316,17 +313,16 @@ def test_dialogue_via_http_mock_ml(settings):
 
 # ------------------------------------------------------ события в Backend ---
 
-def test_events_delivered_to_mock_backend(tmp_path):
-    store = mock_services.EventStore()
-    server = mock_services.make_server("127.0.0.1", 0, SCENARIOS, store)
+def test_events_delivered_raw(tmp_path):
+    store = EventStore()
+    server = make_backend_server(store)
     url = _serve(server)
     try:
         sink = EventSink(tmp_path / "s.log", backend_url=f"{url}/backend")
         sink.emit("call.started", call_id="c1", session_id="s1")
         sink.emit("call.ended", call_id="c1", session_id="s1", reason="completed")
         assert sink.wait_delivered(5)
-        status, events = _http("GET", f"{url}/backend/telephony/events?call_id=c1")
-        assert status == 200 and [e["event"] for e in events] == ["call.started", "call.ended"]
+        assert [e["event"] for e in store.query("c1")] == ["call.started", "call.ended"]
         assert len((tmp_path / "s.log").read_text(encoding="utf-8").splitlines()) == 2
     finally:
         server.shutdown()
@@ -427,18 +423,16 @@ def test_api_health_and_endpoints(call_api):
 def stand():
     try:
         status, health = _http("GET", f"{CALL_API_URL}/health", timeout=5)
-        mocks_status, _ = _http("GET", f"{MOCKS_URL}/health", timeout=5)
     except OSError as exc:
-        pytest.skip(f"virtual-caller/mocks недоступны ({exc}). "
-                    f"Запустите: cd telephony && docker compose up --build -d (COMPOSE_PROFILES=mocks)")
-    if status != 200 or mocks_status != 200:
-        pytest.fail(f"стенд не готов: virtual-caller {status} {health}, mocks {mocks_status}")
+        pytest.skip(f"virtual-caller недоступен ({exc}). Запустите стенд: docker compose --profile llm up -d")
+    if status != 200 or not health.get("ml"):
+        pytest.fail(f"стенд не готов: virtual-caller {status} {health}")
     return health
 
 
 def test_integration_outbound_call_full_dialogue(stand):
     """API звонит «диспетчеру» Local/operator@autotest (Playback вместо голоса),
-    virtual-caller ведёт диалог с mock ML до конца."""
+    virtual-caller ведёт диалог с ML-сервисом до конца."""
     status, call = _http("POST", f"{CALL_API_URL}/calls", {
         "scenario_id": "scenario_001", "session_id": f"it-{int(time.time())}",
         "channel": "Local/operator@autotest"})
@@ -458,8 +452,8 @@ def test_integration_outbound_call_full_dialogue(stand):
     assert final["transcript"][0]["text"] == SCENARIOS["scenario_001"]["opening"]
 
     time.sleep(1)
-    _, events = _http("GET", f"{MOCKS_URL}/backend/telephony/events?call_id={call_id}")
-    names = [e["event"] for e in events]
+    lines = SESSIONS_LOG.read_text(encoding="utf-8").splitlines() if SESSIONS_LOG.exists() else []
+    names = [e["event"] for e in map(json.loads, lines) if e.get("call_id") == call_id]
     assert names[0] == "call.dialing" and "call.started" in names and names[-1] == "call.ended", names
 
     wav = RECORDINGS_DIR / f"{call_id}.wav"

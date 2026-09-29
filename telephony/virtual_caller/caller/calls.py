@@ -36,6 +36,7 @@ class Call:
     ended_at: float | None = None
     recording_url: str | None = None
     transcript: list[dict] = field(default_factory=list)
+    backend: dict | None = None      # id занятия / попытки / обучающегося, если звонок поднял Backend
 
     def to_dict(self) -> dict:
         data = asdict(self)

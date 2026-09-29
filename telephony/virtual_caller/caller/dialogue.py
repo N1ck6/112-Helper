@@ -1,8 +1,12 @@
 """Голосовой цикл учебного звонка.
 
     ML: реплика собеседника -> TTS (голос по полу собеседника) -> STREAM FILE
-    -> RECORD FILE (до паузы) -> STT -> ML: следующая реплика ...
+    -> реплика оператора (до паузы SILENCE_SEC) -> STT -> ML: следующая реплика ...
     пока ML не вернёт end_call или не сработает MAX_TURNS / MAX_CALL_SEC.
+
+Реплика оператора берётся из непрерывного потока его голоса (ear.py): оператор может
+перебить собеседника — тот замолкает, а слова оператора с самого начала попадают в
+реплику. Нет потока (BARGE_IN=0, нет MixMonitor r()) — прежний RECORD FILE без перебивания.
 
 Типы звонков (directory.py): dispatch — диспетчер ДДС звонит в службу,
 report — старший группы звонит в ДДС с докладом, applicant — диспетчер
@@ -15,20 +19,26 @@ report — старший группы звонит в ДДС с докладо�
 
 import logging
 import re
+import threading
 import time
 import uuid
+import wave
 from dataclasses import dataclass, field
 
 from .agi import AGISession, ChannelHungUp
 from .calls import Call, CallRegistry, TraineeContexts
 from .clients import DialogueClient, ServiceError, VoiceClient
 from .config import Settings
-from .directory import APPLICANT, DISPATCH, INCIDENT_112, REPORT, Directory, voice_for
+from .directory import APPLICANT, DISPATCH, INCIDENT_112, REPORT, Directory, tts_voice, voice_for
+from .ear import Ear, frames_for
 from .events import EventSink
 
 log = logging.getLogger("virtual_caller.dialogue")
 
 SAMPLE_RATE = 8000  # формат "wav" в Asterisk: PCM16 mono 8 кГц
+PREROLL_SEC = 0.5   # запас до начала речи: детектору нужно время, первые звуки не теряем
+TAIL_SEC = 0.2
+LISTEN_POLL_MS = 200
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]")
 UNKNOWN_NUMBER_TEXT = "Набранный номер не обслуживается."
 # ML недоступен: собеседник не может ответить — говорим об этом, а не молчим до отбоя
@@ -56,6 +66,9 @@ class CallContext:
     card: dict | None = None
     report: dict | None = None
     extra: dict = field(default_factory=dict)
+    channel: str | None = None
+    ear: Ear | None = None
+    onset: int | None = None     # оператор заговорил во время реплики собеседника: кадр начала речи
 
     def ids(self) -> dict:
         return {"call_id": self.call_id, "session_id": self.session_id, "scenario_id": self.scenario_id,
@@ -77,8 +90,9 @@ def persona_brief(persona: dict | None) -> dict | None:
 class DialogueRunner:
     def __init__(self, settings: Settings, voice: VoiceClient, dialogue: DialogueClient,
                  events: EventSink, registry: CallRegistry, directory: Directory | None = None,
-                 contexts: TraineeContexts | None = None, clock=time.monotonic):
+                 contexts: TraineeContexts | None = None, clock=time.monotonic, ami=None):
         self.s = settings
+        self.ami = ami  # AMI для перебивания (ControlPlayback stop); None — без перебивания
         self.voice = voice
         self.dialogue = dialogue
         self.events = events
@@ -118,9 +132,28 @@ class DialogueRunner:
         self.events.emit("call.started", **ctx.ids(), direction=call.direction, channel=channel,
                          caller_id=env.get("agi_callerid"), persona=persona_brief(ctx.persona),
                          card_id=(ctx.card or {}).get("id"))
-        if ctx.call_type == DISPATCH and ctx.persona is None:
-            return self._unknown_number(agi, ctx)
-        return self.run(agi, ctx)
+        try:
+            if ctx.call_type == DISPATCH and ctx.persona is None:
+                return self._unknown_number(agi, ctx)
+            ctx.channel = channel
+            ctx.ear = self._open_ear(ctx)
+            return self.run(agi, ctx)
+        finally:
+            if ctx.ear:
+                ctx.ear.stop()
+            if self.s.recordings_local_dir.is_dir():  # поток нужен только на время звонка
+                (self.s.recordings_local_dir / f"{ctx.file_stem()}_rx.sln").unlink(missing_ok=True)
+
+    def _open_ear(self, ctx: CallContext) -> Ear | None:
+        """Поток голоса оператора, который пишет MixMonitor r() ([training-run] в dialplan)."""
+        if not self.s.barge_in or not self.s.recordings_local_dir.is_dir():
+            return None
+        ear = Ear(self.s.recordings_local_dir / f"{ctx.file_stem()}_rx.sln", self.s.vad_threshold)
+        if not ear.available():
+            log.warning("call_id=%s: нет потока голоса оператора — запись RECORD FILE, без перебивания",
+                        ctx.call_id)
+            return None
+        return ear.start()
 
     def _inbound_context(self, agi: AGISession, call_id: str, scenario_id: str, channel: str | None) -> CallContext:
         trainee = self._var(agi, "TRAINEE") or trainee_from_channel(channel)
@@ -207,7 +240,7 @@ class DialogueRunner:
         """Озвучить реплику собеседника голосом по его полу и проиграть в канал."""
         t0 = self.clock()
         try:
-            sound = self.voice.synthesize_to_file(text, ctx.call_id, voice_for(ctx.persona))
+            sound = self.voice.synthesize_to_file(text, ctx.call_id, tts_voice(ctx.persona))
             audio = f"{sound}.wav"
         except ServiceError as exc:
             self._error(ctx, "tts", exc)
@@ -216,11 +249,40 @@ class DialogueRunner:
         # событие до проигрывания: frontend показывает реплику, пока она звучит
         if record:
             self._utterance(ctx, turn, "caller", text, audio, {**(latency or {}), "tts_sec": round(tts_sec, 3)})
-        agi.stream_file(sound)
+        if not (record and ctx.ear and ctx.channel and self.ami):
+            agi.stream_file(sound)
+            return
+        # перебивание: оператор заговорил — реплику собеседника останавливаем
+        since, played = ctx.ear.mark(), threading.Event()
+
+        def watch():
+            min_frames = frames_for(self.s.barge_in_min_sec)
+            while not played.wait(0.05):
+                onset = ctx.ear.find_onset(since, min_frames)
+                if onset is not None:
+                    ctx.onset = onset
+                    log.info('call_id=%s: оператор перебил собеседника, реплика остановлена', ctx.call_id)
+                    try:
+                        self.ami.stop_playback(ctx.channel)
+                    except Exception as exc:  # noqa: BLE001 — не прервали, значит дослушает
+                        log.warning("call_id=%s: не удалось прервать реплику: %s", ctx.call_id, exc)
+                    return
+
+        watcher = threading.Thread(target=watch, daemon=True, name=f"barge-{ctx.call_id[:8]}")
+        watcher.start()
+        try:
+            agi.stream_file(sound)
+        finally:
+            played.set()
+            watcher.join(1)
 
     def _listen(self, agi: AGISession, ctx: CallContext, turn: int) -> tuple[str, str, float]:
         name = f"{ctx.file_stem()}_op{turn:02d}"
         audio = f"{self.s.recordings_dir}/{name}.wav"
+        if ctx.ear:
+            if not self._listen_stream(agi, ctx, name):
+                return "", audio, 0.0
+            return self._transcribe(ctx, name, audio)
         # Тишина в RECORD FILE считается и с начала записи: оператор, который
         # задумался на SILENCE_SEC, получил бы пустую реплику. Поэтому пустую
         # первую запись слушаем ещё раз (файл перезаписывается) — собеседник
@@ -232,6 +294,9 @@ class DialogueRunner:
                 break
         else:
             return "", audio, 0.0
+        return self._transcribe(ctx, name, audio)
+
+    def _transcribe(self, ctx: CallContext, name: str, audio: str) -> tuple[str, str, float]:
         t0 = self.clock()
         try:
             text = self.voice.transcribe_file(f"{name}.wav", ctx.call_id)
@@ -239,6 +304,40 @@ class DialogueRunner:
             self._error(ctx, "stt", exc)
             text = ""
         return text, audio, self.clock() - t0
+
+    def _listen_stream(self, agi: AGISession, ctx: CallContext, name: str) -> bool:
+        """Реплика оператора из потока: от начала речи (или перебивания) до паузы SILENCE_SEC.
+
+        Молчит 2 x SILENCE_SEC — пустая реплика (как два пустых RECORD FILE). «#» — конец реплики.
+        Пишет {name}.wav в каталог записей для STT; False — речи не было.
+        """
+        ear = ctx.ear
+        onset, ctx.onset = ctx.onset, None
+        since = ear.mark()
+        speech_min = frames_for(self.s.min_speech_sec)
+        silence = frames_for(self.s.silence_sec)
+        longest = frames_for(self.s.max_utterance_sec)
+        give_up = self.clock() + 2 * self.s.silence_sec
+        end = None
+        while True:
+            if onset is None:
+                onset = ear.find_onset(since, speech_min)
+                if onset is None and self.clock() >= give_up:
+                    return False
+            if onset is not None:
+                end = ear.find_end(onset, silence)
+                if end is not None or ear.mark() - onset >= longest:
+                    break
+            if agi.wait_for_digit(LISTEN_POLL_MS) == "#" and onset is not None:
+                break
+        end = min(end if end is not None else ear.mark(), onset + longest)
+        pcm = ear.pcm(onset - frames_for(PREROLL_SEC), end + frames_for(TAIL_SEC))
+        with wave.open(str(self.s.recordings_local_dir / f"{name}.wav"), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SAMPLE_RATE)
+            w.writeframes(pcm)
+        return True
 
     def _utterance(self, ctx: CallContext, turn: int, role: str, text: str,
                    audio: str | None, latency: dict) -> None:

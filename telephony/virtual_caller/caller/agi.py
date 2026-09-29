@@ -140,6 +140,13 @@ class AGISession:
                 raise ChannelHungUp("отбой во время записи")
         return resp
 
+    def wait_for_digit(self, timeout_ms: int) -> str | None:
+        """Ждать DTMF до timeout_ms, всё это время канал читается (звук идёт в MixMonitor)."""
+        resp = self.command(f"WAIT FOR DIGIT {timeout_ms}")
+        if resp.result == -1:
+            raise ChannelHungUp("отбой во время ожидания реплики")
+        return chr(resp.result) if resp.result > 0 else None
+
     def hangup(self) -> None:
         try:
             self.command("HANGUP")
