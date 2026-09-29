@@ -93,6 +93,24 @@ async def heartbeat(
     return MessageResponse(detail="Состояние сохранено")
 
 
+@router.post(
+    "/attempts/{attempt_id}/dialogue",
+    summary="Реплика заявителя для звонка в браузере",
+    description=(
+        "Разговор с виртуальным заявителем без софтфона. Тело: `turn`, `history` "
+        "([{role: caller|operator, text}]), `operator_text`. Содержание карточки в ML "
+        "подставляет сервер — эталон в браузер не попадает."
+    ),
+)
+async def dialogue_turn(
+    attempt_id: uuid.UUID,
+    session: SessionDep,
+    student=Depends(require(Perm.LESSONS_PARTICIPATE)),
+    data: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    return await TrainingService(session).dialogue_turn(attempt_id, data, student)
+
+
 @router.get("/attempts/{attempt_id}", response_model=AttemptRead, summary="Данные попытки")
 async def get_attempt(attempt_id: uuid.UUID, session: SessionDep, user: CurrentUser) -> AttemptRead:
     attempt = await TrainingService(session).get_attempt(attempt_id, user)

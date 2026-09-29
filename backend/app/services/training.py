@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import difficulty
 from app.core.arm112 import (
     COMMENT_EXAMPLES,
+    caller_knowledge,
     SERVICE_FORBIDDEN_STATUSES,
     primary_services,
     service_codes,
@@ -24,6 +25,7 @@ from app.core.pagination import PageParams
 from app.core.permissions import Perm, RoleCode
 from app.core.security import new_opaque_token, utcnow
 from app.integrations.monitoring import ACTIVE_ATTEMPTS, ACTIVE_LESSONS
+from app.integrations.ml_client import get_ml_client
 from app.integrations.telephony_client import get_telephony_client
 from app.models.card import IncidentCard
 from app.models.enums import (
@@ -788,6 +790,24 @@ class TrainingService:
             await self.session.flush()
         return attempt
 
+    async def dialogue_turn(self, attempt_id: uuid.UUID, data: dict[str, Any], student: User) -> dict[str, Any]:
+        """Реплика заявителя для звонка «в браузере»: карточку в ML подставляет сервер."""
+        attempt = await self._own_active_attempt(attempt_id, student)
+        card = await self.cards.get_or_fail(attempt.card_id, "Карточка не найдена")
+        payload = {
+            "session_id": str(attempt.lesson_id),
+            "scenario_id": "",
+            "call_id": f"web-{attempt.id}",
+            "call_type": "incident_112",
+            "persona": {"service": "Заявитель", "name": (card.caller_profile or {}).get("name"),
+                        "position": "заявитель", "gender": (card.caller_profile or {}).get("gender")},
+            "context": {"card": caller_knowledge(card.title, card.expected_payload, card.caller_profile)},
+            "turn": int(data.get("turn") or 0),
+            "history": list(data.get("history") or [])[-30:],
+            "operator_text": data.get("operator_text"),
+        }
+        return await get_ml_client().dialogue_turn(payload)
+
     async def get_attempt(self, attempt_id: uuid.UUID, actor: User) -> CardAttempt:
         attempt = await self.attempts.get_or_fail(attempt_id, "Попытка не найдена")
         await self._ensure_attempt_access(attempt, actor)
@@ -1377,6 +1397,8 @@ class TrainingService:
                     "student_id": str(student.id),
                     "card_no": card.card_no,
                     "caller_profile": card.caller_profile,
+                    #: Заявитель рассказывает содержание именно этой карточки
+                    "card": caller_knowledge(card.title, card.expected_payload, card.caller_profile),
                     "caller_number": (card.caller_profile or {}).get("phone"),
                     "callee_number": callee,
                     "record": True,

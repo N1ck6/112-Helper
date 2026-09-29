@@ -39,6 +39,8 @@ class MLClient(Protocol):
 
     async def index_material(self, payload: dict[str, Any]) -> dict[str, Any]: ...
 
+    async def dialogue_turn(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
     async def health(self) -> dict[str, Any]: ...
 
 
@@ -56,6 +58,7 @@ class HttpMLClient:
         "analytics": "/api/v1/analytics/summary",
         "recommendations": "/api/v1/recommendations",
         "index_material": "/api/v1/knowledge/index",
+        "dialogue_turn": "/dialogue/turn",
     }
 
     def __init__(self, base_url: str | None = None, timeout: float | None = None) -> None:
@@ -104,6 +107,8 @@ class HttpMLClient:
     async def recommendations(self, payload): return await self._post("recommendations", payload)
 
     async def index_material(self, payload): return await self._post("index_material", payload)
+
+    async def dialogue_turn(self, payload): return await self._post("dialogue_turn", payload)
 
     async def health(self) -> dict[str, Any]:
         client = await self._http()
@@ -857,6 +862,15 @@ class StubMLClient:
             )
         return {"model": STUB_MODEL_NAME, "recommendations": items, "stub": True}
 
+    async def dialogue_turn(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Без ML заявитель пересказывает карточку и дальше просит повторить."""
+        card = (payload.get("context") or {}).get("card") or {}
+        if int(payload.get("turn") or 0) == 0:
+            parts = [card.get("description"), card.get("address")]
+            text = ". ".join(str(p).rstrip(".") for p in parts if p) or "Алло, у нас происшествие!"
+            return {"reply_text": f"Алло, это 112? {text}.", "end_call": False, "model": STUB_MODEL_NAME}
+        return {"reply_text": "Повторите, пожалуйста, плохо слышно.", "end_call": False, "model": STUB_MODEL_NAME}
+
     async def index_material(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "model": STUB_MODEL_NAME,
@@ -1036,6 +1050,8 @@ class HybridMLClient:
     async def recommendations(self, payload): return await self._call("recommendations", payload)
 
     async def index_material(self, payload): return await self._call("index_material", payload)
+
+    async def dialogue_turn(self, payload): return await self._call("dialogue_turn", payload)
 
     async def health(self) -> dict[str, Any]:
         return {**await self.http.health(), "fallback": "rules"}

@@ -189,8 +189,10 @@ class CallControl:
                 report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
         elif call_type == APPLICANT:
             persona = Directory.applicant(card)
+        elif not scenario_id and not (card or {}).get("description"):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "для incident_112 нужен scenario_id или card с описанием")
         elif not scenario_id:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "для incident_112 нужен scenario_id")
+            persona = Directory.applicant(card)   # вызов по карточке: имя и голос заявителя из неё
         else:
             persona = dict(APPLICANT_112)
 
@@ -339,7 +341,9 @@ class CallControl:
         """Backend просит поднять вызов: входящий 112 на рабочее место или отработку по карточке."""
         ids = _backend_ids(payload)
         session_id = (ids or {}).get("lesson_id") or str(uuid.uuid4())
-        card = {"number": payload.get("card_no")} if payload.get("card_no") else None
+        # содержание карточки (суть, адрес, пострадавшие) — заявитель рассказывает именно его
+        card = {**(payload.get("card") if isinstance(payload.get("card"), dict) else {}),
+                **({"number": payload.get("card_no")} if payload.get("card_no") else {})} or None
         if payload.get("direction") == "outbound":
             # отработка: обучающийся (caller_number) звонит в службу или заявителю (callee_number)
             trainee = self._trainee_from(payload.get("caller_number"))
@@ -358,7 +362,8 @@ class CallControl:
             # входящий вызов 112 обучающемуся (callee_number — его SIP-аккаунт или номер АРМ)
             trainee = self._trainee_from(payload.get("callee_number"))
             call = self.start_call({"call_type": INCIDENT_112, "trainee": trainee, "session_id": session_id,
-                                    "scenario_id": payload.get("scenario_id") or self.s.default_112_scenario,
+                                    "scenario_id": payload.get("scenario_id") or (
+                                        "" if (card or {}).get("description") else self.s.default_112_scenario),
                                     "card": card, "backend": ids})
         number = (call.persona or {}).get("number") or call.dialed
         outbound = payload.get("direction") == "outbound"

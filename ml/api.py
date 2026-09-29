@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -157,7 +158,7 @@ def health():
         "classifier_loaded": True,
         "incidents": len(INCIDENTS),
         "categories": len(classifier_data["categories"]),
-        "llm": "qwen3:4b",
+        "llm": os.environ.get("LLM_MODEL", "qwen3:4b-instruct"),
     }
 
 

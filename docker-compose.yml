@@ -1,6 +1,6 @@
 # Полный стенд тренажёра ДДС-112: Frontend + Backend + PostgreSQL + ML + телефония — одной командой:
 #
-#   docker compose --profile llm up -d --build     # с локальной LLM (Ollama + qwen3:4b, ~2.6 ГБ)
+#   docker compose --profile llm up -d --build     # с локальной LLM (Ollama + qwen3:4b-instruct, ~2.5 ГБ)
 #   docker compose up -d --build                   # без LLM: ML работает на классификаторе и правилах
 #
 # http://localhost:8080 — АРМ (с другого ПК: http://<IP>:8080). Через этот же адрес (nginx)
@@ -109,9 +109,9 @@ services:
     container_name: trainer-ml
     environment:
       OLLAMA_URL: http://ollama:11434
-      LLM_MODEL: ${LLM_MODEL:-qwen3:4b}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:4b-instruct}
       # Реплики собеседников в звонках: rules (быстро, предсказуемо) | llm (через Ollama, при сбое — rules).
-      # Для llm нужна instruct-модель без рассуждений: qwen3:4b «думает» вслух и отвечает 10+ с.
+      # qwen3:4b-instruct — без рассуждений вслух: ~3 с на реплику на CPU после прогрева.
       DIALOGUE_ENGINE: ${DIALOGUE_ENGINE:-rules}
       DIALOGUE_LLM_MODEL: ${DIALOGUE_LLM_MODEL:-qwen3:4b-instruct}
       LLM_TIMEOUT_SEC: ${LLM_TIMEOUT_SEC:-20}
@@ -147,7 +147,7 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
-    entrypoint: ["/bin/sh", "-c", "ollama pull ${LLM_MODEL:-qwen3:4b}"]
+    entrypoint: ["/bin/sh", "-c", "ollama pull ${LLM_MODEL:-qwen3:4b-instruct}"]
     restart: "no"
 
 volumes:

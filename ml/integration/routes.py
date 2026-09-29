@@ -6,11 +6,12 @@
     GET  /dialogue/health               движок реплик и сценарии 112
     POST /api/v1/generate/scenarios     генерация сценариев по классификатору (backend INTEGRATION.md §1)
     POST /api/v1/evaluate/attempt       оценка ответа по сценарию ML
+    POST /api/v1/analyze/grammar        проверка грамотности текста — локальная LLM
+    POST /api/v1/recommendations        рекомендации по ошибкам — локальная LLM
     POST /api/v1/generate/correct       } пока не реализованы в ML -> 501,
-    POST /api/v1/analyze/grammar        } backend считает по своим правилам
-    POST /api/v1/analytics/summary      }
-    POST /api/v1/recommendations        }
+    POST /api/v1/analytics/summary      } backend считает по своим правилам
     POST /api/v1/knowledge/index        }
+Нет LLM (без профиля llm) — методы LLM тоже отвечают 501.
 """
 
 import logging
@@ -18,24 +19,24 @@ from typing import Any, Callable, Dict
 
 from fastapi import APIRouter, Body, HTTPException
 
-from . import backend_contract, dialogue
+from . import backend_contract, dialogue, llm
 
 log = logging.getLogger("ml.integration")
 
-NOT_IMPLEMENTED = ("generate/correct", "analyze/grammar", "analytics/summary", "recommendations", "knowledge/index")
+NOT_IMPLEMENTED = ("generate/correct", "analytics/summary", "knowledge/index")
 
 
 def build_router(classifier_data: Any, classify: Callable[[str], Dict[str, Any]]) -> APIRouter:
     router = APIRouter(tags=["Интеграция: телефония и Backend"])
     scenarios = dialogue.load_scenarios()
-    llm = dialogue.LLMConfig.from_env()
+    talk_llm = dialogue.LLMConfig.from_env()
     log.info("реплики собеседников: %s, сценарии 112: %s",
-             f"LLM {llm.model} @ {llm.api_url}" if llm else "правила", ", ".join(sorted(scenarios)))
+             f"LLM {talk_llm.model} @ {talk_llm.api_url}" if talk_llm else "правила", ", ".join(sorted(scenarios)))
 
     @router.post("/dialogue/turn")
     def dialogue_turn(req: Dict[str, Any] = Body(...)):
         try:
-            reply = dialogue.next_turn(req, scenarios, llm)
+            reply = dialogue.next_turn(req, scenarios, talk_llm)
         except dialogue.DialogueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         log.info("dialogue %s call_id=%s turn=%s -> end=%s [%s]", req.get("call_type"), req.get("call_id"),
@@ -44,7 +45,7 @@ def build_router(classifier_data: Any, classify: Callable[[str], Dict[str, Any]]
 
     @router.get("/dialogue/health")
     def dialogue_health():
-        return {"status": "ok", "engine": f"llm:{llm.model}" if llm else "rules", "scenarios": sorted(scenarios)}
+        return {"status": "ok", "engine": f"llm:{talk_llm.model}" if talk_llm else "rules", "scenarios": sorted(scenarios)}
 
     @router.post("/api/v1/generate/scenarios")
     def generate_scenarios(payload: Dict[str, Any] = Body(...)):
@@ -61,6 +62,20 @@ def build_router(classifier_data: Any, classify: Callable[[str], Dict[str, Any]]
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/api/v1/analyze/grammar")
+    def check_grammar(payload: Dict[str, Any] = Body(...)):
+        try:
+            return llm.check_grammar(str(payload.get("text") or ""))
+        except llm.LLMUnavailable as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+    @router.post("/api/v1/recommendations")
+    def recommendations(payload: Dict[str, Any] = Body(...)):
+        try:
+            return llm.recommendations(payload)
+        except llm.LLMUnavailable as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
 
     for path in NOT_IMPLEMENTED:
         router.add_api_route(f"/api/v1/{path}", _not_implemented(path), methods=["POST"])

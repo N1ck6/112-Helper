@@ -13,7 +13,7 @@ OLLAMA_HOST = os.environ.get(
 OLLAMA_CHAT_URL = f"{OLLAMA_HOST}/api/chat"
 OLLAMA_TAGS_URL = f"{OLLAMA_HOST}/api/tags"
 
-MODEL_NAME = "qwen3:4b"
+MODEL_NAME = os.environ.get("LLM_MODEL", "qwen3:4b-instruct")
 
 FIRST_REQUEST_TIMEOUT = 240
 

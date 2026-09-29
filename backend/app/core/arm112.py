@@ -134,6 +134,26 @@ ADDRESS_FIELDS: tuple[str, ...] = (
 FIELD_LABELS: dict[str, str] = {field["code"]: field["label"] for field in DEFAULT_TEMPLATE_FIELDS}
 
 
+def caller_knowledge(card_title: str | None, expected: dict[str, Any] | None,
+                     caller_profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Что знает виртуальный заявитель о своём происшествии (для телефонии и ML).
+
+    Только то, что заявитель может сказать оператору: суть, адрес, пострадавшие, имя.
+    Уходит собеседнику на сервере — обучающемуся в браузер эталон не попадает.
+    """
+    expected = expected or {}
+    profile = caller_profile or {}
+    victims = expected.get("victims_count") if expected.get("has_victims") else 0
+    return {
+        "title": card_title,
+        "description": expected.get("description"),
+        "address": format_address(expected) or expected.get("address_text"),
+        "victims": victims,
+        "applicant": expected.get("applicant_name") or profile.get("name"),
+        "phone": expected.get("aon_phone") or profile.get("phone"),
+    }
+
+
 def format_address(payload: dict[str, Any]) -> str:
     """Собирает адрес в одну строку — для отчётов, PDF и передачи в телефонию."""
     parts = [str(payload.get(code, "")).strip() for code in ADDRESS_FIELDS]
