@@ -252,6 +252,30 @@ async def seed_group(session, users: dict[str, User]) -> StudyGroup:
     return group
 
 
+async def seed_incident_classifier(session) -> int:
+    """Классификатор происшествий заказчика (Klassifikator.xlsx) — в таблицу incident_types.
+
+    Путь — CLASSIFIER_XLSX (в полном стенде смонтирована ml/data/raw). Уже загружен или файла
+    нет — пропуск: классификатор можно загрузить позже через POST /incidents/import/xlsx.
+    """
+    import os
+
+    from app.services.incidents import IncidentCatalogService
+
+    path = Path(os.environ.get("CLASSIFIER_XLSX", ""))
+    service = IncidentCatalogService(session)
+    if await service.types.count() > 0:
+        print("  • классификатор происшествий уже загружен — пропускаю")
+        return 0
+    if not path.is_file():
+        print("  • классификатор происшествий: файл не задан (CLASSIFIER_XLSX) — пропускаю")
+        return 0
+    items = service.parse_xlsx(path.read_bytes())
+    result = await service.import_types(items)
+    print(f"  ✓ классификатор происшествий: {result['imported']} типов из {path.name}")
+    return result["imported"]
+
+
 async def seed_scenarios(session, users: dict[str, User], categories: dict) -> int:
     scenario_repo = ScenarioRepository(session)
     approved = await scenario_repo.count(ScenarioRepository.model.status == ScenarioStatus.APPROVED)
@@ -309,6 +333,7 @@ async def main() -> None:
         await seed_workplaces(session)
         await seed_duty_services(session)
         await seed_group(session, users)
+        await seed_incident_classifier(session)
         await seed_scenarios(session, users, categories)
     print("\nГотово. Учётные записи для входа (только учебный контур):")
     for username, _, role, password in DEMO_USERS:

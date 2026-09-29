@@ -21,12 +21,15 @@ from app.services.audit import AuditService
 
 logger = get_logger(__name__)
 
+#: Варианты заголовков по убыванию приоритета: берётся колонка, совпавшая с более ранним
+#: вариантом (в таблице заказчика «112 - Признак.1 (тип происшествия)» стоит левее
+#: «Итоговый тип происшествия», но название типа — именно итоговый).
 DEFAULT_COLUMN_MAP: dict[str, tuple[str, ...]] = {
-    "code": ("код", "код происшествия", "код екп", "id"),
-    "category_name": ("категория", "категория происшествия", "класс", "группа"),
-    "object": ("объект", "признак", "что случилось"),
-    "detail": ("деталь", "уточнение", "подробность", "объект уточнение"),
-    "name": ("тип происшествия", "итоговый тип", "наименование", "происшествие"),
+    "code": ("код екп", "код происшествия", "код", "номер", "id"),
+    "category_name": ("категория происшествия", "категория", "класс", "группа"),
+    "object": ("что случилось", "объект", "признак"),
+    "detail": ("объект уточнение", "уточнение", "подробность", "деталь"),
+    "name": ("итоговый тип", "наименование", "тип происшествия", "происшествие"),
     "main_service": ("главная служба", "основная служба", "служба"),
 }
 
@@ -217,6 +220,15 @@ class IncidentCatalogService:
                 "Ожидаются колонки «Категория», «Тип происшествия», «Главная служба». "
                 "Укажите лист параметром sheet либо передайте нормализованные данные JSON."
             )
+        if header_index > 0:
+            #: Шапка в две строки (у заказчика «Главная служба» стоит строкой выше основной
+            #: шапки): пустые ячейки заголовка берём из строки над ним.
+            above = preamble[header_index - 1] or ()
+            header = tuple(
+                cell if cell not in (None, "") else (above[i] if i < len(above) else None)
+                for i, cell in enumerate(header)
+            )
+            mapping = self._map_columns(header)
 
         items: list[IncidentTypeImportItem] = []
         data_rows = [*preamble[header_index + 1 :], *rows]
@@ -272,17 +284,21 @@ class IncidentCatalogService:
         return best
 
     def _map_columns(self, header: tuple) -> dict[str, int]:
+        titles = [str(cell or "").strip().lower() for cell in header]
         mapping: dict[str, int] = {}
-        for index, cell in enumerate(header):
-            title = str(cell or "").strip().lower()
-            if not title or title.startswith("unnamed"):
-                continue
-            for field, variants in DEFAULT_COLUMN_MAP.items():
-                if field in mapping:
+        used: set[int] = set()
+        for field, variants in DEFAULT_COLUMN_MAP.items():
+            best: tuple[int, int] | None = None   # (ранг варианта: точное совпадение раньше, индекс колонки)
+            for index, title in enumerate(titles):
+                if not title or title.startswith("unnamed") or index in used:
                     continue
-                if any(variant == title or variant in title for variant in variants):
-                    mapping[field] = index
-                    break
+                for rank, variant in enumerate(variants):
+                    score = rank * 2 + (0 if title == variant else 1)
+                    if (variant == title or variant in title) and (best is None or score < best[0]):
+                        best = (score, index)
+            if best is not None:
+                mapping[field] = best[1]
+                used.add(best[1])
         return mapping
 
     def _row_to_item(

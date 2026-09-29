@@ -52,16 +52,16 @@ uvicorn app.main:app --reload
 Вариант «всё в контейнерах»: `docker compose up --build` — поднимет PostgreSQL, применит миграции
 и запустит API на порту 8000.
 
-**Весь комплекс команды** (backend + frontend + ML + телефония) — одной командой:
+**Весь комплекс команды** (backend + frontend + ML + телефония) — из корня репозитория
+([README](../README.md)):
 
 ```bash
-docker compose -f docker-compose.stack.yml --profile full up --build
-python scripts/check_stack.py --full      # проверка, что части видят друг друга
+docker compose --profile llm up -d --build
+python backend/scripts/check_stack.py --full      # проверка, что части видят друг друга
 ```
 
-Части поднимаются по мере готовности (`--profile ml`, `--profile frontend`), а пока
-чьей-то нет, backend работает на заглушках и сквозной сценарий всё равно показывается.
-Подробности сборки и контракты между частями — [`docs/ASSEMBLY.md`](docs/ASSEMBLY.md).
+В полном стенде backend работает с настоящими ML-сервисом и телефонией (`ML_USE_STUB=false`,
+`TELEPHONY_USE_STUB=false`); чего ML не умеет — считают правила backend (`HybridMLClient`).
 
 ---
 
@@ -394,5 +394,4 @@ locust -f locustfile.py --headless -u 100 -r 10 -t 90s --host http://127.0.0.1:8
    формата ответа. Классификатор происшествий загружать через `POST /api/v1/incidents/import`.
 3. **Телефония/Docker** — присылать события на `POST /api/v1/telephony/events` с заголовком
    `X-Telephony-Token`; путь к аудиозаписи backend сам привяжет к карточке.
-4. **Сборка** — добавить свой `Dockerfile` и подставить путь к папке в
-   `docker-compose.stack.yml`; порядок стыковки описан в [`docs/ASSEMBLY.md`](docs/ASSEMBLY.md).
+4. **Сборка** — корневой `docker-compose.yml` (весь комплекс одной командой).

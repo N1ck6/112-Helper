@@ -141,17 +141,14 @@ http://localhost:8000/docs
 В репозитории предоставлены файлы для контейнеризации сервиса:
 
 - `Dockerfile` — образ FastAPI-приложения
-- `docker-compose.yml` — совместный запуск API и Ollama
 - `.dockerignore` — исключения при сборке образа
 - `.env.example` — шаблон переменных окружения
 
-Схема запуска:
+Сервис вместе с Ollama запускается в составе полного стенда из корня репозитория:
 
-    docker compose up --build
+    docker compose --profile llm up -d --build
 
-API внутри контура будет доступен по адресу:
-
-    http://localhost:8000/docs
+API ML на хосте: http://localhost:8100/docs
 
 Для локальной разработки Docker не обязателен — сервис запускается
 напрямую через `uvicorn api:app --reload`.
