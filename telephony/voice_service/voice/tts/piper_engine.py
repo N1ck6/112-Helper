@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..audio import to_wav_mono16, wav_info
 from .base import EngineNotReady, TTSEngine, TTSResult
+from .silero_engine import pick_voice
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ log = logging.getLogger(__name__)
 class PiperTTS(TTSEngine):
     name = "piper"
 
-    def __init__(self, voice: str, models_dir: Path, aliases: dict[str, str] | None = None):
+    def __init__(self, voice: str, models_dir: Path, aliases: dict[str, list[str]] | None = None):
         self.default_ref = voice
         self.models_dir = Path(models_dir)
         self.aliases = dict(aliases or {})
@@ -50,20 +51,21 @@ class PiperTTS(TTSEngine):
 
     def load(self) -> None:
         self._load_one(self.default_ref)  # без голоса по умолчанию сервис не готов
-        for alias, ref in self.aliases.items():
-            if ref in self._voices:
-                continue
-            try:
-                self._load_one(ref)
-            except EngineNotReady as exc:
-                log.warning("голос %s (%s) недоступен, будет голос по умолчанию: %s", alias, ref, exc)
+        for alias, refs in self.aliases.items():
+            for ref in refs:
+                if ref in self._voices:
+                    continue
+                try:
+                    self._load_one(ref)
+                except EngineNotReady as exc:
+                    log.warning("голос %s (%s) недоступен, будет голос по умолчанию: %s", alias, ref, exc)
 
     def voices(self) -> list[str]:
-        return sorted(self._voices) + [a for a, ref in self.aliases.items() if ref in self._voices]
+        return sorted(self._voices) + [a for a, refs in self.aliases.items() if any(r in self._voices for r in refs)]
 
     def _resolve(self, voice: str | None) -> str:
-        ref = self.aliases.get(voice, voice) if voice else self.default_ref
-        return ref if ref in self._voices else self.default_ref
+        groups = {k: [r for r in refs if r in self._voices] for k, refs in self.aliases.items()}
+        return pick_voice(voice, groups, set(self._voices), self.default_ref)
 
     def _synthesize_native(self, ref: str, text: str) -> bytes:
         buf = io.BytesIO()

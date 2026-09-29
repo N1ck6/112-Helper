@@ -100,6 +100,7 @@ class FakeVoice:
         if self.tts_fails:
             raise ServiceError("tts down")
         self.synthesized.append(text)
+        voice = (voice or "").split("-")[0] or None   # тембр «female-37» -> пол
         self.voices.append(voice)
         return f"/tts/cache_{voice}_{len(self.synthesized):02d}"
 

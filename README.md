@@ -38,7 +38,9 @@
 - SIP/PBX: Asterisk (PJSIP)
 - Voice-сервисы: Python
 - STT: faster-whisper
-- TTS: Piper
+- TTS: Silero v5 (голоса baya, kseniya, xenia, aidar, eugene; модели © Silero Team, CC BY-NC 4.0 —
+  некоммерческое использование), запасной — Piper (Irina, Dmitri, Denis; MIT)
+- LLM: Qwen3 4B Instruct в Ollama (локально)
 - API: REST/JSON
 - БД: PostgreSQL
 - Контейнеризация: Docker / Docker Compose
@@ -64,7 +66,7 @@ docker compose --profile llm up -d --build
 | http://localhost:8100/docs | API ML-сервиса |
 | `<IP>:5063` UDP | SIP для софтфона рабочего места (`ws01`…`ws20`) |
 
-Первый старт скачивает модели STT/TTS (~0.6 ГБ) и LLM `qwen3:4b-instruct` (~2.5 ГБ); интернет нужен
+Первый старт скачивает модели STT/TTS (~0.8 ГБ: Whisper, Silero, Piper) и LLM `qwen3:4b-instruct` (~2.5 ГБ); интернет нужен
 один раз, дальше стенд работает без сети. Учебные учётные записи (создаёт `backend/scripts/seed.py`):
 `admin` / `Admin#2026`, `teacher` / `Teacher#2026`, `student` и `student2` / `Student#2026`.
 При установке seed генерирует через ML 12 сценариев по классификатору происшествий и утверждает их.

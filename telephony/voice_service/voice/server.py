@@ -48,6 +48,11 @@ class ApiError(Exception):
         self.message = message
 
 
+def _with_tts(settings: Settings, engine: str) -> Settings:
+    import dataclasses
+    return dataclasses.replace(settings, tts_engine=engine)
+
+
 class VoiceService:
     """Держит движки и их статус. HTTP-слой — отдельно (VoiceHandler)."""
 
@@ -65,6 +70,16 @@ class VoiceService:
             # нет моделей: первый старт стенда — скачать и повторить (MODELS_AUTO_DOWNLOAD=1)
             if self.settings.models_auto_download and download_for(getattr(self, key).name, self.settings):
                 if self._load_engine(key):
+                    continue
+            # запасной TTS (Silero не загрузился — Piper): звонки звучат живым голосом
+            if key == "tts" and self.settings.tts_fallback_engine not in ("", self.tts.name, "mock"):
+                error, wanted = self.status[key]["error"], self.tts.name
+                self.tts = create_tts(_with_tts(self.settings, self.settings.tts_fallback_engine))
+                if self._load_engine(key) or (self.settings.models_auto_download
+                                              and download_for(self.tts.name, self.settings)
+                                              and self._load_engine(key)):
+                    self.status[key].update(error=error, fallback=True)
+                    log.warning("tts: вместо %s работает %s", wanted, self.tts.name)
                     continue
             # модели так и не появились (нет интернета) — заглушка вместо «мёртвого» сервиса:
             # звонки идут, /health показывает degraded и причину

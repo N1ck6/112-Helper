@@ -2,6 +2,9 @@
 # работает на чистом stdlib и эти пакеты не использует.
 faster-whisper==1.1.1
 piper-tts==1.3.0
+# Silero TTS (torch ставится в Dockerfile из CPU-индекса PyTorch)
+numpy
+scipy
 # faster-whisper 1.1.1 написан под huggingface_hub 0.x (импортирует requests,
 # который hub 1.x больше не тянет) — без ограничения ставится 1.x и download_model падает.
 huggingface_hub>=0.23,<1.0

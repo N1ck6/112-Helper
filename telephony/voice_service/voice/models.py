@@ -45,8 +45,32 @@ def download_whisper(settings: Settings) -> None:
 
 def download_piper(settings: Settings) -> None:
     # голос по умолчанию + голоса категорий собеседника (male/female)
-    for voice in dict.fromkeys([settings.piper_voice, *settings.voice_aliases().values()]):
+    refs = [settings.piper_voice] + [r for refs in settings.voice_aliases().values() for r in refs]
+    for voice in dict.fromkeys(refs):
         download_piper_voice(settings, voice)
+
+
+SILERO_BASE = "https://models.silero.ai/models/tts/ru"
+
+
+def download_silero(settings: Settings) -> None:
+    target = settings.models_dir / "silero" / f"{settings.silero_model}.pt"
+    if target.exists() and target.stat().st_size > 0:
+        log.info("silero %s уже есть", target.name)
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    url = f"{SILERO_BASE}/{settings.silero_model}.pt"
+    tmp = target.with_suffix(".part")
+    for attempt in range(1, 4):   # сервер моделей иногда рвёт TLS — повторяем
+        log.info("Загрузка %s (попытка %d)", url, attempt)
+        try:
+            urllib.request.urlretrieve(url, tmp)
+            tmp.replace(target)
+            return
+        except OSError as exc:
+            log.warning("не скачалось: %s", exc)
+            tmp.unlink(missing_ok=True)
+    raise OSError(f"модель Silero не скачана: {url}")
 
 
 def download_piper_voice(settings: Settings, voice: str) -> None:
@@ -64,7 +88,7 @@ def download_piper_voice(settings: Settings, voice: str) -> None:
         tmp.replace(target)
 
 
-DOWNLOADERS = {"faster_whisper": download_whisper, "piper": download_piper}
+DOWNLOADERS = {"faster_whisper": download_whisper, "piper": download_piper, "silero": download_silero}
 
 
 def download_for(engine_name: str, settings: Settings) -> bool:

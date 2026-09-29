@@ -6,6 +6,7 @@
 (MODELS_AUTO_DOWNLOAD=1). Результат (том ./models на хосте):
     /models/whisper/<WHISPER_MODEL>/model.bin ...
     /models/piper/<PIPER_VOICE>.onnx, .onnx.json
+    /models/silero/<SILERO_MODEL>.pt
 После этого сервис работает без сети (HF_HUB_OFFLINE=1 в образе).
 """
 
@@ -15,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from voice.config import Settings  # noqa: E402
-from voice.models import download_piper, download_whisper, piper_url  # noqa: E402,F401
+from voice.models import download_piper, download_silero, download_whisper, piper_url  # noqa: E402,F401
 
 log = logging.getLogger("download_models")
 
@@ -25,6 +26,7 @@ def main() -> int:
     settings = Settings.from_env()
     download_whisper(settings)
     download_piper(settings)
+    download_silero(settings)
     log.info("Готово. Модели в %s", settings.models_dir)
     return 0
 

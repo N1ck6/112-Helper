@@ -21,7 +21,7 @@ docker compose ps          # все сервисы healthy
 - АРМ: http://localhost:8080 (с другого ПК — `http://<IP>:8080`), телефония на том же адресе:
   `/telephony/` (API, события), `/recordings/` (записи) — [deploy/nginx/default.conf](../deploy/nginx/default.conf).
 - `.env` не обязателен. Для класса/демо: `cp telephony/.env.example telephony/.env`, сменить пароли.
-- Первый старт скачивает модели STT/TTS (~0.6 ГБ, нужен интернет один раз, voice-service
+- Первый старт скачивает модели STT/TTS (~0.8 ГБ: Whisper, Silero, Piper; нужен интернет один раз, voice-service
   `starting` до ~10 мин). Нет интернета — работают заглушки (`/health` → `degraded`).
 - Телефония запускается только в составе полного стенда: ей нужны ML (реплики) и Backend (события).
 - После правки `asterisk/conf/*` — `docker compose restart asterisk` (конфиги рендерятся при старте).
@@ -95,7 +95,7 @@ API: http://localhost:8092/health (`ml`, `voice_service`, `ami`), `/numbers`, `/
 |---|---|---|
 | `asterisk` | SIP 5063, AMI 5041, RTP 10000–10059 | SIP/VoIP, dialplan, запись (MixMonitor) |
 | `virtual-caller` | 8092 (FastAGI 4573 внутри) | голосовой цикл, API звонков, события, справочник служб |
-| `voice-service` | 8091 | STT faster-whisper / TTS Piper (2 голоса, кэш фраз), сменные движки |
+| `voice-service` | 8091 | STT faster-whisper / TTS Silero (5 голосов: у каждого собеседника свой) с запасным Piper, кэш фраз, сменные движки |
 | `audio-tools` | 8090 | записи: список, прослушивание, MP3 |
 | `frontend` (корневой compose) | 8080 | nginx: АРМ + прокси телефонии, Backend и ML |
 

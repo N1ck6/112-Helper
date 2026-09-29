@@ -17,6 +17,8 @@ import threading
 import time
 import urllib.request
 
+import re
+
 import pytest
 
 from conftest import REPO_ROOT
@@ -227,7 +229,7 @@ def test_integration_every_service_number_answers(stand):
         surname = c["name"].split()[0]
         ok = (call["reason"] == "completed" and callers and surname in callers[0] and "слушаю" in callers[0]
               and callers[-1] == c["accept"])
-        voices = {t["audio"].split("cache_")[1].split("_")[0] for t in call["transcript"]
+        voices = {t["audio"].split("cache_")[1].split("_")[0].split("-")[0] for t in call["transcript"]
                   if t["role"] == "caller" and t.get("audio")}
         if not ok or voices != {c["gender"]}:
             bad[number] = (call["reason"], callers, voices)
@@ -248,7 +250,8 @@ def test_integration_incident_112(stand, number, scenario, gender):
     assert call["reason"] == "completed", call["transcript"]
     assert _callers(call)[0] == SCENARIOS[scenario]["opening"]
     audio = [t["audio"] for t in call["transcript"] if t["role"] == "caller" and t.get("audio")]
-    assert audio and all(f"cache_{gender}_" in a for a in audio), audio
+    # имя кэша: cache_<пол>[-<тембр собеседника>]_<хэш>
+    assert audio and all(re.search(rf"cache_{gender}(-\d+)?_", a) for a in audio), audio
 
 
 @pytest.mark.parametrize("number", ["2999", "5555"])

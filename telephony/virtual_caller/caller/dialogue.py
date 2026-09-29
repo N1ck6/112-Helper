@@ -29,7 +29,7 @@ from .agi import AGISession, ChannelHungUp
 from .calls import Call, CallRegistry, TraineeContexts
 from .clients import DialogueClient, ServiceError, VoiceClient
 from .config import Settings
-from .directory import APPLICANT, DISPATCH, INCIDENT_112, REPORT, Directory, voice_for
+from .directory import APPLICANT, DISPATCH, INCIDENT_112, REPORT, Directory, tts_voice, voice_for
 from .ear import Ear, frames_for
 from .events import EventSink
 
@@ -240,7 +240,7 @@ class DialogueRunner:
         """Озвучить реплику собеседника голосом по его полу и проиграть в канал."""
         t0 = self.clock()
         try:
-            sound = self.voice.synthesize_to_file(text, ctx.call_id, voice_for(ctx.persona))
+            sound = self.voice.synthesize_to_file(text, ctx.call_id, tts_voice(ctx.persona))
             audio = f"{sound}.wav"
         except ServiceError as exc:
             self._error(ctx, "tts", exc)
