@@ -128,7 +128,7 @@ async def seed_users(session, roles: dict[str, Role]) -> dict[str, User]:
         user.roles = [roles[str(role_code)]]
         users[username] = user
     await session.flush()
-    print(f"  ✓ пользователей: {len(users)} (пароли см. в scripts/seed.py)")
+    print(f"  ✓ пользователей: {len(users)} (пароли — в корневом .env)")
     return users
 
 
