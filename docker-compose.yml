@@ -24,7 +24,6 @@ include:
   - path: telephony/docker-compose.yml
     # общий .env стенда: телефония читает настройки и пароли оттуда же, что и остальные сервисы
     env_file: .env
-    env_file: .env
 
 services:
   # ------------------------------------------------------------------ Frontend
