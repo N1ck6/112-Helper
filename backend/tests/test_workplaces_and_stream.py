@@ -222,6 +222,50 @@ async def test_processing_requires_who_answered_and_what_was_said(
     assert len(listed.json()) == 1
 
 
+async def test_processing_of_finished_call_is_recorded_once(
+    client: AsyncClient, teacher_headers, student_headers, student_id, categories
+) -> None:
+    """Звонок с панели «Телефон» уже состоялся: отработка без повторного вызова, одна на звонок."""
+    lesson_id = await _start_lesson(
+        client, teacher_headers, student_id, category_ids=[categories["fire_apartment"]]
+    )
+    await client.post(f"/api/v1/training/lessons/{lesson_id}/join", headers=student_headers)
+    issued = await client.post(
+        f"/api/v1/training/lessons/{lesson_id}/next-card", headers=student_headers
+    )
+    attempt_id = issued.json()["attempt"]["id"]
+    url = f"/api/v1/training/attempts/{attempt_id}/processings"
+    body = {
+        "kind": "service",
+        "service_name": "Служба 101 (МЧС)",
+        "phone": "2101",
+        "answered_by": "Старший диспетчер ЦУКС Петров Андрей",
+        "summary": "Пожар в квартире, улица Тверская, дом 12",
+        "duration_ms": 24000,
+        "sip_call_id": "6b7a05a9b1304890baec35e104c99e75",
+        "recording_url": "http://localhost:8090/6b7a05a9b1304890baec35e104c99e75.wav",
+    }
+    first = await client.post(url, headers=student_headers, json=body)
+    assert first.status_code == 201, first.text
+    assert first.json()["meta"]["recording_url"].endswith(".wav")
+    again = await client.post(url, headers=student_headers, json=body)
+    assert again.json()["id"] == first.json()["id"], "Второе сообщение о том же звонке не дублирует строку"
+
+    failed = await client.post(url, headers=student_headers, json={
+        "kind": "service", "service_name": "Служба 102 (полиция)", "phone": "2102",
+        "summary": "Не дозвонились: трубку не сняли", "sip_call_id": "web-1", "outcome": "failed",
+    })
+    assert failed.status_code == 201, "Недозвон записывается без ФИО принявшего"
+    assert failed.json()["meta"]["outcome"] == "failed"
+
+    listed = await client.get(url, headers=student_headers)
+    assert [p["sequence_no"] for p in listed.json()] == [1, 2]
+
+    mine = await client.get(f"/api/v1/training/lessons/{lesson_id}/my-attempts", headers=student_headers)
+    assert mine.status_code == 200, mine.text
+    assert attempt_id in [row["attempt_id"] for row in mine.json()], "Своя карточка видна после перезагрузки АРМ"
+
+
 async def test_contacts_come_from_notification_list(
     client: AsyncClient, teacher_headers, student_headers, student_id, categories
 ) -> None:

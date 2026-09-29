@@ -1,13 +1,14 @@
-/* Серверный режим АРМ: работа на данных Backend (backend/docs/INTEGRATION.md §3).
+/* Данные АРМ — Backend (backend/docs/INTEGRATION.md §3). В браузере ничего не хранится,
+ * кроме сеанса входа.
  *
- * Включается, когда вход выполнен через Backend (session.mode === "backend"). Тогда:
  *   • оператор 112 и диспетчер ДДС работают в занятии, которое запустил преподаватель:
  *     карточки выдаёт Backend, он же считает время, статусы и оценку (ML);
  *   • оператор: «Принять вызов» → карточка + входящий голосовой вызов 112 на телефон рабочего
  *     места; содержание карточки скрыто, его рассказывает заявитель; «Сохранить» → оценка;
  *   • диспетчер: «Поток карточек» — незакрытые карточки занятия с таймерами 30 с / 3 мин,
- *     «Принята / Не принята» и статусы реагирования уходят в Backend по регламенту АРМ-112.
- * Демо-режим (Backend недоступен: GitHub Pages, файл) работает по-старому, на данных браузера.
+ *     «Принята / Не принята» и статусы реагирования уходят в Backend по регламенту АРМ-112;
+ *   • свои карточки занятия (и закрытые, с оценкой) — после перезагрузки страницы тоже;
+ *   • отработки: звонки по карточке с панели «Телефон» — строки отработки в Backend.
  *
  * app.js берёт отсюда данные и вызывает действия через window.DDS_SERVER.
  */
@@ -18,9 +19,8 @@
   const session = (function () {
     try { return JSON.parse(localStorage.getItem("ddsSession") || "null") || {}; } catch (e) { return {}; }
   })();
-  const enabled = session.mode === "backend" && !!session.token && !!API;
-  const S = (window.DDS_SERVER = { enabled: enabled });
-  if (!enabled) return;
+  const S = (window.DDS_SERVER = { enabled: !!session.token && !!API });
+  if (!S.enabled) return;
 
   const req = API.request;
   const ROLE_MODE = { student: "card_fill", dispatcher: "card_action" };
@@ -67,6 +67,7 @@
         S.state = "joined";
         S.message = "";
         if (joined.active_attempt) upsert(fromAttempt(joined.active_attempt));
+        await loadMine();
         if (mode === "card_action") await refreshStream();
         changed();
       }
@@ -152,6 +153,48 @@
     else list[i] = Object.assign(list[i], inc);
     return i === -1 ? inc : list[i];
   }
+
+  // Закрытые карточки занятия: оператору — строка с оценкой, диспетчеру — карточка целиком (история)
+  const CLOSED_OPERATOR = { submitted: "graded", evaluated: "graded", skipped: "empty", expired: "empty" };
+  async function loadMine() {
+    const rows = await req("GET", "/training/lessons/" + S.lesson.id + "/my-attempts");
+    const list = window.DDS ? window.DDS.getIncidents() : [];
+    for (const row of rows || []) {
+      if (!CLOSED_OPERATOR[row.status] || list.some((c) => c.id === row.attempt_id)) continue;
+      if (session.role === "dispatcher") {
+        await loadCard({ id: row.attempt_id, number: row.card_no }).catch(() => {});
+        continue;
+      }
+      list.push({
+        id: row.attempt_id,
+        server: { attemptId: row.attempt_id, lessonId: S.lesson.id, status: row.status },
+        number: row.card_no || "—",
+        time: hhmm(row.issued_at),
+        phone: row.phone || "—",
+        workstation: session.workstation || null,
+        source: "operator",
+        types: row.incident_class ? [row.incident_class] : [],
+        addressLine: row.address || null,
+        address: {},
+        status: CLOSED_OPERATOR[row.status],
+        emptyReason: row.status === "expired" ? "expired" : row.status === "skipped" ? "skipped" : null,
+        evaluation: row.score == null ? null : { score: row.score, passed: row.passed, errors: [] },
+        dds: { decision: "pending", history: [] },
+      });
+    }
+  }
+
+  // ------------------------------------------------------------ отработки ---
+  // Звонок по карточке с панели «Телефон» (js/telephony.js) -> строка отработки в Backend.
+  // sip_call_id — звонок уже состоялся: Backend не поднимает его повторно и не дублирует строку.
+  S.addProcessing = function (inc, entry) {
+    if (!inc || !inc.server) return Promise.resolve(null);
+    return req("POST", "/training/attempts/" + inc.server.attemptId + "/processings", entry);
+  };
+  S.processings = function (inc) {
+    if (!inc || !inc.server) return Promise.resolve([]);
+    return req("GET", "/training/attempts/" + inc.server.attemptId + "/processings");
+  };
 
   // ------------------------------------------------------------ оператор ---
   S.nextCall = async function () {

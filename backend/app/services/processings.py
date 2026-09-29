@@ -23,6 +23,7 @@ from app.models.enums import (
 from app.models.system import CallRecord
 from app.models.training import CardAttempt, CardProcessing
 from app.models.user import User
+from app.repositories.system import CallRepository
 from app.repositories.training import AttemptRepository
 from app.services.audit import AuditService
 from app.services.routing import RoutingService
@@ -40,6 +41,7 @@ class ProcessingService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.attempts = AttemptRepository(session)
+        self.calls = CallRepository(session)
         self.routing = RoutingService(session)
         self.audit = AuditService(session)
         self.telephony = get_telephony_client()
@@ -116,12 +118,21 @@ class ProcessingService:
         if attempt.status not in AttemptRepository.ACTIVE_STATUSES:
             raise BusinessRuleError("Карточка уже закрыта — отработку добавить нельзя")
 
+        sip_call_id = str(data.get("sip_call_id") or "").strip() or None
+        if sip_call_id:
+            #: Звонок уже состоялся; одна отработка на звонок, даже если о нём сообщили дважды
+            #: (две вкладки АРМ получают одно событие телефонии).
+            for existing in await self.for_attempt(attempt.id, student):
+                if (existing.meta or {}).get("sip_call_id") == sip_call_id:
+                    return existing
+
         kind = ProcessingKind(str(data.get("kind") or ProcessingKind.SERVICE.value))
+        failed = data.get("outcome") == "failed"
         summary = str(data.get("summary") or "").strip()
         if not summary:
             raise BusinessRuleError("Суть сообщения обязательна: это содержание отработки")
         answered_by = str(data.get("answered_by") or "").strip()
-        if kind in ANSWERED_BY_REQUIRED and not answered_by:
+        if kind in ANSWERED_BY_REQUIRED and not answered_by and not failed:
             raise BusinessRuleError(
                 "Укажите, кто принял сообщение: строка отработки без этого недействительна"
             )
@@ -150,9 +161,22 @@ class ProcessingService:
             offset_ms=int((now - attempt.issued_at).total_seconds() * 1000),
             duration_ms=data.get("duration_ms"),
             workplace_id=attempt.workplace_id,
+            meta={
+                k: v
+                for k, v in {
+                    "sip_call_id": sip_call_id,
+                    "recording_url": data.get("recording_url"),
+                    "outcome": "failed" if failed else "completed",
+                }.items()
+                if v
+            },
         )
 
-        call = await self._originate(attempt, processing, student)
+        call = (
+            await self._link_call(attempt, sip_call_id)
+            if sip_call_id
+            else await self._originate(attempt, processing, student)
+        )
         if call is not None:
             processing.call_id = call.id
 
@@ -166,6 +190,20 @@ class ProcessingService:
             CardProcessing.attempt_id == attempt_id
         )
         return int((await self.session.execute(stmt)).scalar_one()) + 1
+
+    async def _link_call(self, attempt: CardAttempt, sip_call_id: str) -> CallRecord | None:
+        """Состоявшийся звонок телефонии -> к карточке (запись разговора видна в разборе).
+
+        Звонка «в браузере» телефония не видела — отработка сохраняется без него.
+        """
+        call = await self.calls.by_sip_id(sip_call_id)
+        if call is None:
+            return None
+        if call.attempt_id is None:
+            call.attempt_id = attempt.id
+            call.lesson_id = call.lesson_id or attempt.lesson_id
+            call.student_id = call.student_id or attempt.student_id
+        return call
 
     async def _originate(
         self, attempt: CardAttempt, processing: CardProcessing, student: User

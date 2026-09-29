@@ -12,7 +12,6 @@
   const modeEl = document.getElementById("login-mode");
 
   const ROLES_WITH_WORKSTATION = ["student", "dispatcher"];
-  const MIN_DEMO_PASSWORD = 4;
 
   let selectedRole = "student";
 
@@ -50,13 +49,10 @@
   requestAnimationFrame(() => moveIndicatorTo(document.querySelector(".role-btn.active")));
   window.addEventListener("resize", () => moveIndicatorTo(document.querySelector(".role-btn.active")));
 
-  const ON_STAND = !!(window.APP_CONFIG || {}).ON_STAND;
   API.probe().then((ok) => {
     modeEl.textContent = ok
-      ? "Backend подключён: вход проверяется на сервере"
-      : ON_STAND
-        ? "Сервер тренажёра недоступен — вход невозможен. Проверьте, что стенд запущен (docker compose ps)."
-        : `Backend недоступен — демо-режим: пароль не проверяется (введите любой от ${MIN_DEMO_PASSWORD} символов)`;
+      ? "Сервер тренажёра подключён"
+      : "Сервер тренажёра недоступен — вход невозможен. Проверьте, что стенд запущен (docker compose ps).";
     modeEl.classList.toggle("is-online", !!ok);
   });
 
@@ -79,11 +75,8 @@
 
     try {
       const session = await login({ username, password, role: selectedRole, workstation });
-      session.sid = "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       localStorage.setItem("ddsSession", JSON.stringify(session));
-      API.touchSession(session);
       if (workstation) localStorage.setItem("ddsWorkstation", workstation);
-      API.log("login", `Вход: ${session.fullName}${workstation ? " (" + workstation + ")" : ""}, режим: ${session.mode}`);
       window.location.href = "dashboard.html";
     } catch (err) {
       errorEl.textContent = err.message || "Не удалось войти. Проверьте данные.";
@@ -94,38 +87,8 @@
   });
 
   async function login(payload) {
-    let remote = null;
-    try {
-      remote = await API.login(payload);
-    } catch (err) {
-      throw new Error(err.message || "Неверный логин или пароль");
-    }
-    if (!remote && ON_STAND) throw new Error("Сервер тренажёра недоступен, попробуйте через минуту");
-    if (remote) {
-      return Object.assign({ role: payload.role, fullName: payload.username, workstation: payload.workstation }, remote, { mode: "backend", loggedInAt: new Date().toISOString() });
-    }
-    return mockLogin(payload);
-  }
-
-  function mockLogin({ username, password, role, workstation }) {
-    return new Promise((resolve, reject) => {
-      setTimeout(() => {
-        if (username.length < 2) {
-          reject(new Error("Слишком короткий логин"));
-          return;
-        }
-        if (password.length < MIN_DEMO_PASSWORD) {
-          reject(new Error(`Пароль: не менее ${MIN_DEMO_PASSWORD} символов`));
-          return;
-        }
-        resolve({
-          role,
-          fullName: username,
-          workstation: workstation,
-          mode: "demo",
-          loggedInAt: new Date().toISOString(),
-        });
-      }, 400);
-    });
+    const remote = await API.login(payload);
+    return Object.assign({ role: payload.role, fullName: payload.username, workstation: payload.workstation }, remote,
+      { loggedInAt: new Date().toISOString() });
   }
 })();

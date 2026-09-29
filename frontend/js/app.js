@@ -1,7 +1,7 @@
 (function () {
   const D = window.DDS_DATA;
   const API = window.DDS_API;
-  // Вход через Backend: карточки, занятия и оценки — на сервере (js/server.js). Иначе — демо в браузере.
+  // Карточки, занятия, статусы и оценки — на Backend (js/server.js)
   const SERVER = window.DDS_SERVER && window.DDS_SERVER.enabled ? window.DDS_SERVER : null;
 
   const ROLE_LABELS = {
@@ -22,11 +22,9 @@
     return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   }
 
-  const hhmm = () => new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-
   const session = JSON.parse(localStorage.getItem("ddsSession") || "null");
 
-  if (!session || !ROLE_LABELS[session.role]) {
+  if (!session || !ROLE_LABELS[session.role] || !SERVER) {
     localStorage.removeItem("ddsSession");
     window.location.href = "index.html";
     return;
@@ -65,200 +63,26 @@
     "ЦОДД",
   ];
 
-  function emptyAddress() {
-    return { country: "Россия", region: "Москва", locality: "Москва", okrug: "", district: "", street: "", house: "", korpus: "", flat: "", entrance: "", floor: "", code: "", descriptive: "" };
-  }
-
-  function newDds() {
-    return { decision: "pending", decisionAt: null, comment: null, reaction: null, reactionAt: null, history: [] };
-  }
-
-  function nextNumber() {
-    const n = Number(localStorage.getItem("ddsCardCounter") || 36814850) + 1;
-    localStorage.setItem("ddsCardCounter", String(n));
-    return String(n);
-  }
-
-  function defaults() {
-    return {
-      status: "new",
-      source: "operator",
-      workstation: null,
-      scenarioId: null,
-      clusterId: null,
-      seq: null,
-      seqTotal: null,
-      types: [],
-      address: emptyAddress(),
-      addressLine: null,
-      caller: null,
-      callerStatus: null,
-      foreignLanguage: false,
-      description: null,
-      services: [],
-      phoneGiven: null,
-      phoneOnsite: null,
-      flags: { injured: false, notOnSite: false, ambulanceRefused: false, blocked: false },
-      injuredCount: null,
-      survey: {},
-      chat: [],
-      fillSeconds: null,
-      sentAt: null,
-      dds: newDds(),
-      teacherGrade: null,
-      dispatcherComment: null,
-      emptyReason: null,
-    };
-  }
-
-  function poolFor(ws) {
-    const all = D.getScenarios().filter((s) => s.approved);
-    const a = ws ? D.getAssignments()[ws] : null;
-    if (a && a.clusterId) {
-      const inCluster = all.filter((s) => s.clusterId === a.clusterId);
-      if (inCluster.length) return inCluster;
-    }
-    if (a && a.scenarioId) {
-      const one = all.find((s) => s.id === a.scenarioId);
-      if (one) return [one];
-    }
-    return all;
-  }
-
-  function scenarioFor(ws, index) {
-    const list = poolFor(ws);
-    return list.length ? list[index % list.length] : null;
-  }
-
-  function clusterInfo(sc) {
-    if (!sc) return { clusterId: null, seq: null, seqTotal: null };
-    const list = D.scenariosOfCluster(sc.clusterId, true);
-    const pos = list.findIndex((x) => x.id === sc.id);
-    return { clusterId: sc.clusterId, seq: pos >= 0 ? pos + 1 : null, seqTotal: list.length || null };
-  }
-
-  function clusterLabel(call) {
-    const c = call && call.clusterId ? D.getCluster(call.clusterId) : null;
-    if (!c) return "";
-    return "Кластер «" + c.title + "»" + (call.seq ? " · сценарий " + call.seq + " из " + call.seqTotal : "");
-  }
-
-  function clusterProgress() {
-    const a = session.workstation ? D.getAssignments()[session.workstation] : null;
-    if (!a || !a.clusterId) return "";
-    const cluster = D.getCluster(a.clusterId);
-    const total = D.scenariosOfCluster(a.clusterId, true).length;
-    if (!cluster || !total) return "";
-    const dispatcher = session.role === "dispatcher";
-    const mine = incidents.filter((c) => c.workstation === session.workstation && c.clusterId === a.clusterId && (dispatcher ? c.source === "system" : c.source !== "system"));
-    const passed = dispatcher
-      ? mine.filter((c) => ["declined", "done", "refused"].indexOf(ddsState(c).phase) !== -1).length
-      : mine.filter((c) => c.status === "review" || c.status === "empty").length;
-    return "Кластер «" + esc(cluster.title) + "» · пройдено " + passed + " из " + total;
-  }
-
-  function newIncident(id, time, phone, scenarioId) {
-    const sc = scenarioId ? D.getScenarios().find((x) => x.id === scenarioId) : null;
-    const info = clusterInfo(sc);
-    return Object.assign(defaults(), {
-      id: id,
-      number: nextNumber(),
-      time: time,
-      phone: phone,
-      workstation: session.workstation || null,
-      scenarioId: scenarioId || null,
-      clusterId: info.clusterId,
-      seq: info.seq,
-      seqTotal: info.seqTotal,
-    });
-  }
-
-  function normalize(inc) {
-    const base = defaults();
-    const n = Object.assign(base, inc);
-    n.flags = Object.assign(base.flags, inc.flags);
-    n.address = Object.assign(emptyAddress(), inc.address);
-    n.dds = Object.assign(newDds(), inc.dds);
-    n.survey = inc.survey || {};
-    n.chat = inc.chat || [];
-    if (!n.number) n.number = nextNumber();
-    if (n.status === "approved") {
-      n.status = "review";
-      n.dds.decision = "accepted";
-      n.dds.reaction = "done";
-    } else if (n.status === "returned") {
-      n.status = "review";
-      n.dds.decision = "declined";
-      n.dds.comment = inc.dispatcherComment || null;
-    }
-    if (n.status === "review" && !n.sentAt) n.sentAt = Date.now();
-    return n;
-  }
-
-  function seedIncidents() {
-    return [
-      ["c1", "10:47", "+7 (495) 123-45-67"],
-      ["c2", "10:52", "+7 (903) 555-12-09"],
-      ["c3", "10:58", "+7 (499) 887-21-34"],
-      ["c4", "11:04", "Номер скрыт"],
-    ].map((row, i) => {
-      const sc = scenarioFor(null, i);
-      return newIncident(row[0], row[1], row[2], sc ? sc.id : null);
-    });
-  }
-
-  function loadIncidents() {
-    if (SERVER) return [];
-    try {
-      const raw = localStorage.getItem("ddsIncidents");
-      if (raw) return JSON.parse(raw).map(normalize);
-    } catch (e) {
-      localStorage.removeItem("ddsIncidents");
-    }
-    return seedIncidents();
-  }
-
-  function saveIncidents() {
-    if (SERVER) return;   // данные хранит Backend
-    localStorage.setItem("ddsIncidents", JSON.stringify(incidents));
-    API.syncIncidents(incidents);
-  }
-
-  let incidents = loadIncidents();
-
-  let users = [
-    { name: "Иванов И.И.", role: "Оператор", blocked: false },
-    { name: "Смирнова О.П.", role: "Диспетчер", blocked: false },
-    { name: "Кузнецова Е.А.", role: "Преподаватель", blocked: false },
-    { name: "Сидоров П.П.", role: "Администратор", blocked: false },
-    { name: "Козлов Д.А.", role: "Оператор", blocked: true },
-  ];
+  let incidents = [];
 
   const TOOLBARS = {
     student: {
       tabs: [{ id: "queue", label: "Очередь вызовов", order: 10 }],
-      primary: { label: "Создать карточку", action: "create-card" },
+      primary: { label: "Принять вызов", action: "create-card" },
     },
     dispatcher: {
       tabs: [
         { id: "stream", label: "Поток карточек", order: 10 },
         { id: "history", label: "История", order: 20 },
       ],
-      primary: { label: "Смоделировать поступление", action: "simulate-incoming" },
+      primary: { label: "Следующая карточка", action: "simulate-incoming" },
     },
     teacher: { tabs: [] },
-    admin: {
-      tabs: [
-        { id: "progress", label: "Прогресс", order: 10 },
-        { id: "users", label: "Пользователи", order: 20 },
-      ],
-    },
+    admin: { tabs: [] },
   };
 
   function tabsFor(role) {
-    let extra = (window.DDS_TABS || []).filter((t) => t.roles.indexOf(role) !== -1);
-    // серверные вкладки (server: true) заменяют демо-вкладки с тем же id; без Backend — наоборот
-    extra = extra.filter((t) => (SERVER ? !extra.some((o) => o !== t && o.id === t.id && o.server) : !t.server));
+    const extra = (window.DDS_TABS || []).filter((t) => t.roles.indexOf(role) !== -1);
     const own = TOOLBARS[role].tabs.filter((t) => !extra.some((o) => o.id === t.id));
     return own.concat(extra).sort((a, b) => a.order - b.order);
   }
@@ -290,9 +114,7 @@
       )
       .join("");
 
-    const primary = SERVER && config.primary
-      ? { action: config.primary.action, label: session.role === "student" ? "Принять вызов" : "Следующая карточка" }
-      : config.primary;
+    const primary = config.primary;
     const primaryHtml = primary
       ? `<button type="button" class="btn-primary" data-action="${primary.action}">${primary.label}</button>`
       : "";
@@ -315,21 +137,9 @@
   }
 
   function createOperatorCard() {
-    if (SERVER) {
-      SERVER.nextCall()
-        .then((call) => { renderWorkspace(); openSheet(call); })
-        .catch((e) => showToast(e.message));
-      return;
-    }
-    const now = new Date();
-    const mineCount = incidents.filter((c) => c.source !== "system" && c.workstation === session.workstation && String(c.id).charAt(0) === "m").length;
-    const sc = scenarioFor(session.workstation, mineCount);
-    const phone = sc ? sc.caller.phone : "—";
-    const call = newIncident("m" + now.getTime(), hhmm(), phone, sc ? sc.id : null);
-    incidents = [call].concat(incidents);
-    saveIncidents();
-    API.log("card_created", "Открыта карточка № " + call.number);
-    openSheet(call);
+    SERVER.nextCall()
+      .then((call) => { renderWorkspace(); openSheet(call); })
+      .catch((e) => showToast(e.message));
   }
 
   // Главная служба типа из классификатора происшествий (ЕКП) -> служба в списке оповещения АРМ
@@ -337,7 +147,7 @@
     MCHS: "Служба 101 (МЧС)", Police: "Служба 102 (ОМВД)", AMBULANCE: "Служба 103 (СМП)", MOSGAZ: "Служба 104 (Мосгаз)",
     MOSVODOCANAL: "Мосводоканал", GKH: "ГБУ «Жилищник»", ZODD: "ЦОДД", MOSGORTRANS: "Мосгортранс", GORMOST: "ГБУ «Гормост»",
   };
-  const ekpTypes = {};   // тип из классификатора -> главная служба (поиск «Что случилось?» в серверном режиме)
+  const ekpTypes = {};   // тип из классификатора -> главная служба (поиск «Что случилось?»)
 
   function servicesForTypes(types) {
     const set = [];
@@ -351,38 +161,9 @@
   }
 
   function simulateIncoming() {
-    if (SERVER) {
-      SERVER.nextCard()
-        .then((call) => { showToast("Поступила карточка № " + call.number + ": на приём " + D.TIMERS.accept + " с"); renderWorkspace(); })
-        .catch((e) => showToast(e.message));
-      return;
-    }
-    const pool = poolFor(session.workstation);
-    if (!pool.length) {
-      showToast("Нет утверждённых сценариев — утвердите сценарий у преподавателя");
-      return;
-    }
-    const given = incidents.filter((c) => c.source === "system" && c.workstation === session.workstation).length;
-    const sc = pool[given % pool.length];
-    const now = new Date();
-    const inc = newIncident("s" + now.getTime(), hhmm(), sc.caller.phone, sc.id);
-    inc.source = "system";
-    inc.workstation = session.workstation || null;
-    inc.types = sc.types.slice();
-    inc.addressLine = sc.address;
-    inc.caller = sc.caller.name;
-    inc.callerStatus = sc.caller.status;
-    inc.description = sc.description;
-    inc.flags.injured = !!sc.injured;
-    inc.injuredCount = sc.injured ? "1" : null;
-    inc.services = servicesForTypes(inc.types);
-    inc.status = "review";
-    inc.sentAt = Date.now();
-    incidents = [inc].concat(incidents);
-    saveIncidents();
-    API.log("card_incoming", "Поступила карточка № " + inc.number);
-    showToast("Поступила карточка № " + inc.number + ": на приём " + D.TIMERS.accept + " с");
-    renderWorkspace();
+    SERVER.nextCard()
+      .then((call) => { showToast("Поступила карточка № " + call.number + ": на приём " + D.TIMERS.accept + " с"); renderWorkspace(); })
+      .catch((e) => showToast(e.message));
   }
 
   function typeLabels(call) {
@@ -435,12 +216,15 @@
     return { phase: "active", label: d.reaction ? reactionLabel(d.reaction) : "Принята", cls: "status-done" };
   }
 
+  const EMPTY_REASON = { no_contact: "Нет контакта", call_failed: "Срыв звонка", skipped: "Нет контакта / срыв", expired: "Время вышло" };
+
   function statusPill(call) {
-    if (call.status === "graded" && call.evaluation) {
+    if (call.status === "graded") {
       const ev = call.evaluation;
+      if (!ev) return `<span class="status-pill status-new">Сохранена · идёт оценка</span>`;
       return `<span class="status-pill ${ev.passed ? "status-done" : "status-blocked"}">Оценка ${Math.round(ev.score)} · ${ev.passed ? "зачтено" : "не зачтено"}</span>`;
     }
-    if (call.status === "empty") return `<span class="cell-muted">${call.emptyReason === "no_contact" ? "Нет контакта" : "Срыв звонка"}</span>`;
+    if (call.status === "empty") return `<span class="cell-muted">${EMPTY_REASON[call.emptyReason] || "Без заполнения"}</span>`;
     if (call.status === "review") {
       const st = ddsState(call);
       return `<span class="status-pill ${st.cls}">${st.label}</span>`;
@@ -505,13 +289,6 @@
     const workspace = document.getElementById("workspace");
     const role = session.role;
 
-    const serverTab = SERVER && (window.DDS_TABS || []).find((t) => t.server && t.id === activeTab && t.roles.indexOf(role) !== -1);
-    if (serverTab) {
-      workspace.innerHTML = serverTab.render(window.DDS);
-      if (serverTab.wire) serverTab.wire(workspace, window.DDS);
-      return;
-    }
-
     if (role === "student" && activeTab === "queue") {
       workspace.innerHTML = renderOperatorQueue();
       wireOperatorQueue();
@@ -525,16 +302,6 @@
     if (role === "dispatcher" && activeTab === "history") {
       workspace.innerHTML = renderDispatcherHistory();
       openReviewOnClick(".row-action[data-id]", "id", false);
-      return;
-    }
-    if (role === "admin" && activeTab === "progress") {
-      workspace.innerHTML = renderAdminProgress();
-      openReviewOnClick(".row-action[data-id]", "id", false);
-      return;
-    }
-    if (role === "admin" && activeTab === "users") {
-      workspace.innerHTML = renderUsersPanel();
-      wireUsersPanel();
       return;
     }
 
@@ -564,11 +331,11 @@
 
   function renderOperatorQueue() {
     const mine = incidents.filter((c) => c.source !== "system" && (!c.workstation || !session.workstation || c.workstation === session.workstation));
-    const openCount = mine.filter((c) => c.status === "new" || (c.status === "review" && c.dds.decision === "declined")).length;
+    const openCount = mine.filter((c) => c.status === "new").length;
 
     const rows = mine
       .map((call, i) => {
-        const canEdit = call.status === "new" || (!SERVER && call.status === "review" && call.dds.decision === "declined");
+        const canEdit = call.status === "new";
         const actionBtn = canEdit
           ? `<button type="button" class="row-action" data-row-open data-id="${call.id}">Открыть</button>`
           : `<button type="button" class="row-action" data-row-open data-view-id="${call.id}">Просмотр</button>`;
@@ -582,7 +349,7 @@
     return `
       <div class="panel-head">
         <h2>Очередь вызовов</h2>
-        <span class="count">${SERVER ? esc(SERVER.banner()) + " · " : clusterProgress() ? clusterProgress() + " · " : ""}Требуют заполнения: ${openCount}</span>
+        <span class="count">${esc(SERVER.banner())} · Требуют заполнения: ${openCount}</span>
       </div>
       <div class="data-table-wrap">
         <table class="data-table">
@@ -635,11 +402,11 @@
     return `
       <div class="panel-head">
         <h2>Поток карточек</h2>
-        <span class="count">${SERVER ? esc(SERVER.banner()) + " · " : clusterProgress() ? clusterProgress() + " · " : ""}В работе: ${pending.length}</span>
+        <span class="count">${esc(SERVER.banner())} · В работе: ${pending.length}</span>
       </div>
       <p class="empty-hint" style="padding:0 0 12px;">На решение «Принята / Не принята» даётся ${D.TIMERS.accept} с, иначе карточка получает статус «Не оповещено». После приёма — ${D.TIMERS.respond / 60} мин на следующий статус реагирования, иначе «Не завершено».</p>
       <div class="data-table-wrap">
-        ${pending.length ? `<table class="data-table"><thead><tr><th>№</th><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Адрес</th><th>Приём</th><th>Реагирование</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty-hint">${SERVER ? "Поток пуст. Карточки поступают по ходу занятия; «Следующая карточка» — взять сразу." : "Поток пуст. Нажмите «Смоделировать поступление» или дождитесь карточек от операторов."}</div>`}
+        ${pending.length ? `<table class="data-table"><thead><tr><th>№</th><th>Время</th><th>АОН</th><th>Тип происшествия</th><th>Адрес</th><th>Приём</th><th>Реагирование</th><th>Статус</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty-hint">Поток пуст. Карточки поступают по ходу занятия; «Следующая карточка» — взять сразу.</div>`}
       </div>`;
   }
 
@@ -665,73 +432,6 @@
       <div class="data-table-wrap">
         ${done.length ? `<table class="data-table"><thead><tr><th>№</th><th>Время</th><th>Тип происшествия</th><th>Адрес</th><th>Решение</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<div class="empty-hint">Пока нет завершённых карточек.</div>`}
       </div>`;
-  }
-
-  function renderAdminProgress() {
-    const rows = incidents
-      .map((call, i) =>
-        cardRow(call, i, {
-          before: `<td data-label="Место" class="cell-mono">${esc(call.workstation || "—")}</td>`,
-          after: `<td data-label="Статус">${statusPill(call)}</td><td data-label="">${call.status !== "new" ? `<button type="button" class="row-action" data-row-open data-id="${call.id}">Просмотр</button>` : ""}</td>`,
-        })
-      )
-      .join("");
-
-    return `
-      <div class="panel-head">
-        <h2>Прогресс операторов и диспетчеров</h2>
-        <span class="count">Карточек всего: ${incidents.length}</span>
-      </div>
-      <p class="empty-hint" style="padding:0 0 14px;">Режим наблюдения: администратор видит весь конвейер обработки вызова, но не может редактировать карточки.</p>
-      <div class="data-table-wrap">
-        <table class="data-table">
-          <thead><tr><th>№</th><th>Время</th><th>Место</th><th>Тип происшествия</th><th>Адрес</th><th>Статус</th><th></th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-  }
-
-  function renderUsersPanel() {
-    const rows = users
-      .map((u, i) => {
-        const statusCell = u.blocked
-          ? `<span class="status-pill status-blocked">Заблокирован</span>`
-          : `<span class="status-pill status-done">Активен</span>`;
-        const actionLabel = u.blocked ? "Разблокировать" : "Заблокировать";
-        return `
-        <tr style="--i:${i}">
-          <td data-label="ФИО">${esc(u.name)}</td>
-          <td data-label="Роль" class="cell-muted">${esc(u.role)}</td>
-          <td data-label="Статус">${statusCell}</td>
-          <td data-label=""><button type="button" class="row-action ${u.blocked ? "" : "danger"}" data-name="${esc(u.name)}">${actionLabel}</button></td>
-        </tr>`;
-      })
-      .join("");
-
-    return `
-      <div class="panel-head">
-        <h2>Пользователи</h2>
-        <span class="count">Всего: ${users.length}</span>
-      </div>
-      <div class="data-table-wrap">
-        <table class="data-table">
-          <thead><tr><th>ФИО</th><th>Роль</th><th>Статус</th><th></th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
-  }
-
-  function wireUsersPanel() {
-    document.querySelectorAll(".row-action[data-name]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const user = users.find((u) => u.name === btn.dataset.name);
-        if (!user) return;
-        user.blocked = !user.blocked;
-        API.log("user_block", `${user.name}: ${user.blocked ? "заблокирован" : "разблокирован"}`);
-        showToast(user.blocked ? `${user.name}: доступ заблокирован` : `${user.name}: доступ восстановлен`);
-        renderWorkspace();
-      });
-    });
   }
 
   const overlay = document.getElementById("incident-sheet");
@@ -809,11 +509,11 @@
         else selectedTypes.splice(idx, 1);
         typesField.classList.remove("has-error");
         applyTypes();
-        if (SERVER) SERVER.action(currentCall, "classified");
+        SERVER.action(currentCall, "classified");
       });
     });
 
-    // серверный режим: поиск по полному классификатору происшествий (ML), как в АРМ-112 («пож», «тран»)
+    // поиск по полному классификатору происшествий (ML), как в АРМ-112 («пож», «тран»)
     const ekpBox = document.createElement("div");
     ekpBox.className = typeTilesEl.className;
     typeTilesEl.after(ekpBox);
@@ -828,11 +528,11 @@
       btn.classList.toggle("selected", idx === -1);
       typesField.classList.remove("has-error");
       applyTypes();
-      if (SERVER) SERVER.action(currentCall, "classified");
+      SERVER.action(currentCall, "classified");
     });
     function searchEkp(query) {
       const url = (window.APP_CONFIG || {}).ML_TYPES_URL;
-      if (!SERVER || !url || query.length < 3) { ekpBox.innerHTML = ""; return; }
+      if (!url || query.length < 3) { ekpBox.innerHTML = ""; return; }
       fetch(url + "?limit=12&q=" + encodeURIComponent(query)).then((r) => r.json()).then((list) => {
         ekpBox.innerHTML = (Array.isArray(list) ? list : []).map((t) => {
           ekpTypes[t.incident_type] = t.main_service || "";
@@ -873,7 +573,7 @@
 
     addressInput.addEventListener("input", () => {
       addressField.classList.remove("has-error");
-      if (SERVER) SERVER.action(currentCall, "field_filled", "address_street");
+      SERVER.action(currentCall, "field_filled", "address_street");
     });
     callerInput.addEventListener("input", () => callerField.classList.remove("has-error"));
     callerStatusSelect.addEventListener("change", () => callerStatusField.classList.remove("has-error"));
@@ -910,10 +610,8 @@
     if (!confirm(`Сохранить карточку со статусом «${label}» без заполнения остальных полей?`)) return;
     currentCall.status = "empty";
     currentCall.emptyReason = reason;
-    if (SERVER && currentCall.server) SERVER.skip(currentCall).catch((e) => showToast(e.message));
-    API.log("card_empty", `Карточка № ${currentCall.number}: ${label}`);
+    if (currentCall.server) SERVER.skip(currentCall).catch((e) => showToast(e.message));
     showToast(`Карточка сохранена · ${label}`);
-    saveIncidents();
     closeSheet();
     renderWorkspace();
   }
@@ -1082,28 +780,21 @@
     currentCall.services = finalServices;
     currentCall.fillSeconds = secondsElapsed;
     currentCall.workstation = session.workstation || currentCall.workstation;
-    if (SERVER && currentCall.server) {
-      const call = currentCall;
-      closeSheet();
-      showToast("Карточка сохранена, идёт оценка…");
-      SERVER.submit(call, typeLabels(call) || [])
-        .then((res) => {
-          showToast(`Карточка № ${call.number}: оценка ${Math.round(res.score)} из 100 · ${res.passed ? "зачтено" : "не зачтено"}`);
-          renderWorkspace();
-        })
-        .catch((e) => showToast("Не удалось сохранить: " + e.message));
-      return;
-    }
-    currentCall.status = "review";
-    currentCall.sentAt = Date.now();
-    currentCall.dds = newDds();
-    currentCall.dispatcherComment = null;
-
-    API.log("card_sent", `Карточка № ${currentCall.number} отправлена диспетчеру за ${secondsElapsed} с`);
-    showToast(`Карточка № ${currentCall.number} отправлена диспетчеру · заполнена за ${secondsElapsed} с`);
-    saveIncidents();
+    const call = currentCall;
     closeSheet();
+    showToast("Карточка сохранена, идёт оценка…");
+    call.status = "graded";
     renderWorkspace();
+    SERVER.submit(call, typeLabels(call) || [])
+      .then((res) => {
+        showToast(`Карточка № ${call.number}: оценка ${Math.round(res.score)} из 100 · ${res.passed ? "зачтено" : "не зачтено"}`);
+        renderWorkspace();
+      })
+      .catch((e) => {
+        call.status = "new";
+        renderWorkspace();
+        showToast("Не удалось сохранить: " + e.message);
+      });
   }
 
   function startTimer() {
@@ -1163,7 +854,7 @@
     applyTypes();
 
     numberEl.textContent = call.number;
-    clusterEl.textContent = clusterLabel(call);
+    clusterEl.textContent = "";
     phoneAonInput.value = call.phone;
     phoneEl.textContent = call.phone;
     timeEl.textContent = call.time;
@@ -1207,7 +898,6 @@
       if (e.target === reviewOverlay) closeReviewSheet();
     });
     document.getElementById("review-callback-btn").addEventListener("click", () => {
-      API.log("callback", `Перезвон заявителю по карточке № ${currentReviewCall.number}`);
       if (window.DDS_TELEPHONY) emit("dds:callback", currentReviewCall);
       else showToast(`Звонок заявителю: ${currentReviewCall.phone}`);
     });
@@ -1217,10 +907,6 @@
       const btn = e.target.closest("[data-reaction]");
       if (btn && !btn.disabled) setReaction(btn.dataset.reaction);
     });
-  }
-
-  function pushHistory(call, id, label, comment) {
-    call.dds.history.push({ id: id, label: label, time: hhmm(), comment: comment || null });
   }
 
   function serverRespond(call, status, comment) {
@@ -1248,21 +934,7 @@
       showToast("Комментарий обязателен: укажите причину и кому передана информация");
       return;
     }
-    if (SERVER && call.server) return serverRespond(call, kind, comment);
-    call.dds.decision = kind;
-    call.dds.decisionAt = Date.now();
-    call.dds.comment = comment || null;
-    pushHistory(call, kind, kind === "accepted" ? "Принята" : "Не принята", comment);
-    API.log("dds_" + kind, `Карточка № ${call.number}: ${kind === "accepted" ? "принята" : "не принята"}`);
-    saveIncidents();
-    if (kind === "declined") {
-      showToast("Карточка не принята, причина передана оператору");
-      closeReviewSheet();
-    } else {
-      showToast("Карточка принята");
-      fillReview(call, true);
-    }
-    renderWorkspace();
+    serverRespond(call, kind, comment);
   }
 
   function setReaction(id) {
@@ -1280,15 +952,7 @@
     } else if (order.indexOf(id) !== cur + 1) {
       return;
     }
-    if (SERVER && call.server) return serverRespond(call, id, comment);
-    call.dds.reaction = id;
-    call.dds.reactionAt = Date.now();
-    pushHistory(call, id, reactionLabel(id), comment);
-    reviewComment.value = "";
-    API.log("dds_reaction", `Карточка № ${call.number}: ${reactionLabel(id)}`);
-    saveIncidents();
-    fillReview(call, true);
-    renderWorkspace();
+    serverRespond(call, id, comment);
   }
 
   function surveyChips(call) {
@@ -1317,7 +981,7 @@
   function fillReview(call, allow) {
     currentReviewAllow = allow;
     document.getElementById("review-title").textContent = "Карточка № " + call.number;
-    document.getElementById("review-cluster").textContent = clusterLabel(call);
+    document.getElementById("review-cluster").textContent = "";
     document.getElementById("review-phone").textContent = call.phone;
     document.getElementById("review-callback-btn").hidden = !!call.emptyReason;
 
@@ -1368,7 +1032,7 @@
   }
 
   function openReviewSheet(call, allowActions) {
-    if (SERVER && call.server && !call.server.fresh) {
+    if (call.server && !call.server.fresh) {
       call.server.fresh = true;
       SERVER.loadCard(call).then((c) => { if (currentReviewCall && currentReviewCall.id === c.id) fillReview(c, currentReviewAllow); }).catch(() => {});
     }
@@ -1443,27 +1107,16 @@
   window.DDS = {
     role: session.role,
     session: session,
-    addCallLog(incidentId, entry) {
-      const call = incidents.find((c) => c.id === incidentId);
-      if (!call) return false;
-      call.calls = (call.calls || []).concat([entry]);
-      saveIncidents();
-      return true;
-    },
     getIncident(incidentId) {
       return incidents.find((c) => c.id === incidentId) || null;
     },
     getIncidents: () => incidents,
-    saveIncidents: saveIncidents,
-    getUsers: () => users,
     showToast: showToast,
     renderWorkspace: renderWorkspace,
     openReview: openReviewSheet,
     typeLabels: typeLabels,
     formatAddress: formatAddress,
     statusPill: statusPill,
-    clusterLabel: clusterLabel,
-    poolFor: poolFor,
     ddsState: ddsState,
     esc: esc,
     INCIDENT_TYPES: INCIDENT_TYPES,
@@ -1492,7 +1145,7 @@
   renderTopbar();
   renderToolbar();
   renderWorkspace();
-  if (SERVER) SERVER.onChange(() => { if (["queue", "stream", "history"].indexOf(activeTab) !== -1) renderWorkspace(); });
+  SERVER.onChange(() => { if (["queue", "stream", "history"].indexOf(activeTab) !== -1) renderWorkspace(); });
   startClock();
   initSheet();
   initReviewSheet();
@@ -1500,24 +1153,8 @@
   fitReview = watchFit(reviewOverlay);
   setInterval(tickTimers, 1000);
 
-  if (!session.sid) {
-    session.sid = "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    localStorage.setItem("ddsSession", JSON.stringify(session));
-  }
-  API.touchSession(session);
-  setInterval(() => API.touchSession(session), 15000);
-
-  API.pullIncidents().then((list) => {
-    if (!list) return;
-    incidents = list.map(normalize);
-    localStorage.setItem("ddsIncidents", JSON.stringify(incidents));
-    renderWorkspace();
-  });
-
   document.getElementById("logout-btn").addEventListener("click", () => {
-    API.log("logout", "Выход из системы");
-    API.dropSession(session.sid);
-    if (SERVER) API.request("POST", "/auth/logout").catch(() => {});
+    API.request("POST", "/auth/logout").catch(() => {});
     localStorage.removeItem("ddsSession");
     window.location.href = "index.html";
   });

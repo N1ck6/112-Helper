@@ -111,6 +111,14 @@ class AttemptRepository(BaseRepository[CardAttempt]):
         )
         return (await self.session.execute(stmt)).scalars().first()
 
+    async def for_participant(self, participant_id: uuid.UUID) -> Sequence[CardAttempt]:
+        stmt = (
+            sa.select(CardAttempt)
+            .where(CardAttempt.participant_id == participant_id)
+            .order_by(CardAttempt.issued_at.desc())
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+
     async def active_stream(self, participant_id: uuid.UUID) -> Sequence[CardAttempt]:
         stmt = (
             sa.select(CardAttempt)

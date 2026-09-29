@@ -8,8 +8,8 @@
  *   • «Перезвонить и уточнить» у диспетчера — звонок заявителю (applicant);
  *   • «Доклад старшего группы» (диспетчер) — входящий доклад службы (report);
  *   • ход звонка и реплики вживую (SSE), «Завершить», запись после разговора;
- *   • отработки: каждый звонок по карточке сохраняется в ней (служба, номер, кто принял,
- *     суть, время, запись) — window.DDS.addCallLog из app.js;
+ *   • отработки: каждый звонок по карточке — строка отработки в Backend (служба, номер,
+ *     кто принял, суть, время, запись; js/server.js), панель показывает строки Backend;
  *   • статус оператора «доступен / недоступен» передаётся телефонии: на паузе
  *     не приходят входящие вызовы от системы;
  *   • режим «В браузере» (js/webphone.js): звонок прямо со страницы — микрофон и
@@ -28,7 +28,6 @@
   const cfg = window.APP_CONFIG || {};
   const TEL = String(cfg.TELEPHONY_API_URL || "telephony").replace(/\/$/, "");
   const TEL_RELATIVE = !/^[a-z]+:\/\//i.test(TEL);
-  const SCENARIOS_112 = ["scenario_001", "scenario_002"];
   const REPORT_STAGES = ["arrival", "in_progress", "completed"];
   const CALL_TYPE_LABEL = {
     dispatch: "Звонок в службу",
@@ -93,7 +92,7 @@
     return TEL_RELATIVE ? `recordings/${String(url).split("/").pop()}` : url;
   }
 
-  const hhmm = () => new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  const clock = (iso) => new Date(iso || Date.now()).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   const $ = (id) => document.getElementById(id);
   const text = (id) => {
     const node = $(id);
@@ -302,6 +301,8 @@
   el.display.addEventListener("keydown", (e) => { if (e.key === "Enter") dialNumber(); });
   el.dial.addEventListener("click", dialNumber);
   function setOpen(open) {
+    // встроенная в карточку панель всегда раскрыта; tel-open сдвинул бы окно карточки
+    if (widget.classList.contains("docked")) return;
     widget.classList.toggle("collapsed", !open);
     document.body.classList.toggle("tel-open", open);
   }
@@ -409,15 +410,12 @@
     if (e.key === "Escape" && !pop.hidden) openBook(false);
   });
 
-  // без телефонии справочник стенда — встроенная копия из js/webphone.js; нужна и там, где
-  // синтеза речи нет (встроенный браузер VS Code и др.), поэтому не через `web`
-  if (window.DDS_WEBPHONE) {
-    standNumbers = window.DDS_WEBPHONE.directory().map((c) => ({ number: c.number, title: c.service, name: c.name }));
-  }
+  // справочник стенда — из телефонии; службы нужны и справочной базе (там, где нет синтеза
+  // речи, например во встроенном браузере VS Code), поэтому не через `web`
   api("GET", "/numbers").then((list) => {
     if (Array.isArray(list) && list.length) standNumbers = list;
   }).catch(() => {});
-  if (web) api("GET", "/directory").then((list) => web.setDirectory(list)).catch(() => {});
+  if (window.DDS_WEBPHONE) api("GET", "/directory").then((list) => window.DDS_WEBPHONE.setDirectory(list)).catch(() => {});
 
   // ☎ из справочной базы и других разделов: document.dispatchEvent(new CustomEvent("dds:dial", {detail: {number}}))
   document.addEventListener("dds:dial", (e) => {
@@ -431,7 +429,7 @@
   let registered = null;  // софтфон зарегистрирован; null — телефония недоступна
   let mlOk = true;
   let current = null;     // {call_id, call_type, persona, status}
-  const tracked = {};     // call_id -> {cardId, call_type, persona, dialed, startedAt} для отработок
+  const tracked = {};     // call_id -> {cardId, call_type, persona, dialed} для отработок
   let card = null;        // открытая карточка: {id, source: "sheet"|"review", incident}
 
   const busy = () => !!(current && current.status !== "ended");
@@ -498,55 +496,73 @@
 
   function track(callId, info) {
     if (!callId || tracked[callId]) return;
-    tracked[callId] = Object.assign({ cardId: card ? card.id : null, startedAt: hhmm() }, info);
+    tracked[callId] = Object.assign({ cardId: card ? card.id : null }, info);
   }
 
   // --------------------------------------------------------- отработки ---
-  function saveCallLog(d, status) {
+  // Звонок по карточке -> строка отработки в Backend (js/server.js). Звонок уже состоялся:
+  // Backend получает его id и не поднимает вызов повторно.
+  const PROCESSING_KIND = { dispatch: "service", applicant: "applicant", report: "incoming_report" };
+  const KIND_LABEL = { service: "Звонок в службу", applicant: "Звонок заявителю", incoming_report: "Доклад старшего группы" };
+  const S = window.DDS_SERVER;
+  const incidentOf = (id) => (id && window.DDS ? window.DDS.getIncident(id) : null);
+
+  function loadLogs(incident) {
+    if (!S || !incident) return;
+    S.processings(incident).then((list) => {
+      incident.processings = list || [];
+      if (card && card.id === incident.id) renderLogs();
+    }).catch(() => {});
+  }
+
+  function saveProcessing(d, failed) {
     const t = tracked[d.call_id];
-    if (!t || !t.cardId || !window.DDS || !["dispatch", "applicant", "report"].includes(t.call_type)) return;
-    const persona = d.persona || t.persona || {};
-    const transcript = d.transcript || [];
-    const said = transcript.filter((x) => x.role === (t.call_type === "report" ? "caller" : "operator") && x.text);
-    const entry = {
-      time: t.startedAt,
-      call_type: t.call_type,
-      service: persona.service || null,
-      number: persona.number || t.dialed || null,
-      accepted_by: [persona.position, persona.name].filter(Boolean).join(" ") || null,
-      summary: said.length ? said.map((x) => x.text).join(" ").slice(0, 300) : null,
-      status: status,
-      duration_sec: d.duration_sec || 0,
-      recording_url: d.recording_url || null,
-      call_id: d.call_id,
-    };
-    if (window.DDS.addCallLog(t.cardId, entry)) renderLogs();
     delete tracked[d.call_id];
+    const incident = t && incidentOf(t.cardId);
+    if (!incident || !S || !PROCESSING_KIND[t.call_type]) return;
+    const persona = d.persona || t.persona || {};
+    const said = (d.transcript || []).filter((x) => x.role === (t.call_type === "report" ? "caller" : "operator") && x.text);
+    const summary = failed
+      ? "Не дозвонились: " + (FAIL_REASON[d.reason] || d.reason || "нет связи")
+      : said.length ? said.map((x) => x.text).join(" ").slice(0, 2000) : "Разговор без сообщения";
+    S.addProcessing(incident, {
+      kind: PROCESSING_KIND[t.call_type],
+      service_name: persona.service || null,
+      phone: String(persona.number || t.dialed || "").slice(0, 32) || null,
+      answered_by: failed ? null : [persona.position, persona.name].filter(Boolean).join(" ") || persona.service || null,
+      summary: summary,
+      duration_ms: failed ? null : Math.round((d.duration_sec || 0) * 1000),
+      sip_call_id: d.call_id,
+      recording_url: d.recording_url || null,
+      outcome: failed ? "failed" : "completed",
+    }).then(() => loadLogs(incident))
+      .catch((e) => { el.state.textContent = "Отработка не сохранена: " + e.message; });
   }
 
   function renderLogs() {
-    const incident = card && window.DDS ? window.DDS.getIncident(card.id) : null;
-    const logs = (incident && incident.calls) || [];
+    const incident = card ? incidentOf(card.id) : null;
+    const logs = (incident && incident.processings) || [];
     // во встроенной панели — только две последние, чтобы не появлялась прокрутка
     const limit = widget.classList.contains("docked") ? 2 : logs.length;
     el["logs-title"].hidden = !logs.length;
     el["logs-title"].textContent = "Отработки по карточке" + (logs.length > limit ? ` · последние ${limit} из ${logs.length}` : "");
     el.logs.innerHTML = "";
-    logs.slice().reverse().slice(0, limit).forEach((c) => {
+    logs.slice().reverse().slice(0, limit).forEach((p) => {
+      const meta = p.meta || {};
       const item = document.createElement("div");
       item.className = "tel-logitem";
       const head = document.createElement("div");
-      head.textContent = `${c.time} · ${c.service || CALL_TYPE_LABEL[c.call_type] || "звонок"}${c.number ? " (" + c.number + ")" : ""}`;
-      const meta = document.createElement("div");
-      meta.className = "muted";
-      meta.textContent = c.status === "failed"
-        ? `Не оповещено: ${FAIL_REASON[c.reason] || c.reason || "нет связи"}`
-        : `Принял: ${c.accepted_by || "—"} · ${c.duration_sec} с${c.summary ? " · Суть: " + c.summary : ""}`;
+      head.textContent = `${clock(p.at)} · ${p.service_name || KIND_LABEL[p.kind] || "звонок"}${p.phone ? " (" + p.phone + ")" : ""}`;
+      const info = document.createElement("div");
+      info.className = "muted";
+      info.textContent = meta.outcome === "failed"
+        ? `Не оповещено · ${p.summary || ""}`
+        : `Принял: ${p.answered_by || "—"} · ${Math.round((p.duration_ms || 0) / 1000)} с · Суть: ${p.summary || "—"}`;
       item.appendChild(head);
-      item.appendChild(meta);
-      if (c.recording_url) {
+      item.appendChild(info);
+      if (meta.recording_url) {
         const a = document.createElement("a");
-        a.href = recordingUrl(c.recording_url);
+        a.href = recordingUrl(meta.recording_url);
         a.target = "_blank";
         a.rel = "noopener";
         a.textContent = "Запись";
@@ -591,14 +607,8 @@
   });
   on("call.failed", (d) => {
     const t = tracked[d.call_id];
-    if (t && t.cardId && window.DDS && ["dispatch", "applicant"].includes(t.call_type)) {
-      window.DDS.addCallLog(t.cardId, {
-        time: t.startedAt, call_type: t.call_type, service: (t.persona || {}).service || null,
-        number: (t.persona || {}).number || t.dialed || null, status: "failed", reason: d.reason, call_id: d.call_id,
-      });
-      renderLogs();
-    }
-    delete tracked[d.call_id];
+    if (t && ["dispatch", "applicant"].includes(t.call_type)) saveProcessing(d, true);
+    else delete tracked[d.call_id];
     if (!current || current.call_id !== d.call_id) return;
     current.status = "ended";
     el.state.textContent = "Не дозвонились: " + (FAIL_REASON[d.reason] || d.reason);
@@ -608,7 +618,7 @@
     if (current && current.call_id === d.call_id && d.stage === "ml") el.state.textContent = "Собеседник недоступен (ML) — звонок завершается";
   });
   on("call.ended", (d) => {
-    saveCallLog(d, "completed");
+    saveProcessing(d, false);
     if (!current || current.call_id !== d.call_id) return;
     current.status = "ended";
     el.state.textContent = `Звонок завершён: ${END_REASON[d.reason] || d.reason} · ${d.duration_sec || 0} с`;
@@ -642,9 +652,7 @@
   function placeWebCall(body) {
     const opts = Object.assign({ trainee: WS, session_id: session.sid || "web" }, body);
     if (!opts.card && card) opts.card = currentCard();
-    // голосовой заявитель 112 — сценарий, назначенный карточке преподавателем
-    if (opts.call_type === "incident_112" && card && card.incident && card.incident.scenarioId) opts.scenario_id = card.incident.scenarioId;
-    // занятие на сервере: заявитель говорит по карточке Backend (её содержание браузер не видит)
+    // заявитель 112 говорит по карточке занятия (её содержание браузер не видит — подставляет Backend)
     if (opts.call_type === "incident_112" && card && card.incident && card.incident.server) opts.attempt_id = card.incident.server.attemptId;
     web.start(opts, {
       emit: (type, d) => { if (handlers[type]) handlers[type](d); },
@@ -731,6 +739,7 @@
     card = { id: incident && incident.id, source: source, incident: incident };
     pushContext();
     renderLogs();
+    loadLogs(incident);
   }
 
   function closeCard() {
@@ -786,17 +795,13 @@
     voice.textContent = "☎ Вызов голосом";
     voice.title = "Учебный заявитель позвонит на телефон рабочего места";
     voice.addEventListener("click", () => {
-      const onServer = card && card.incident && card.incident.server;
-      if (onServer && !useBrowser()) {
+      if (!useBrowser()) {
         // при выдаче карточки Backend сам звонит заявителем на телефон рабочего места
         setOpen(true);
         el.state.textContent = "Заявитель звонит на телефон рабочего места при выдаче карточки. Нет софтфона — режим «В браузере».";
         return;
       }
-      if (onServer) return placeCall({ call_type: "incident_112", card: sheetCard() }, "Вызов 112");
-      const n = parseInt(String((card && card.id) || "").replace(/\D/g, ""), 10) || 1;
-      placeCall({ call_type: "incident_112", scenario_id: SCENARIOS_112[(n - 1) % SCENARIOS_112.length],
-                  card: sheetCard() }, "Вызов 112");
+      placeCall({ call_type: "incident_112", card: sheetCard() }, "Вызов 112");
     });
     meta.appendChild(voice);
   }
@@ -809,7 +814,7 @@
   el.report.addEventListener("click", () => {
     const incident = card && card.source === "review" ? card.incident : null;
     const service = (incident && incident.services && incident.services[0]) || "Служба 101 (МЧС)";
-    const done = ((incident && incident.calls) || []).filter((c) => c.call_type === "report").length;
+    const done = ((incident && incident.processings) || []).filter((p) => p.kind === "incoming_report").length;
     placeCall({
       call_type: "report", service: service, card: currentCard(),
       report: { status: REPORT_STAGES[done % REPORT_STAGES.length] },

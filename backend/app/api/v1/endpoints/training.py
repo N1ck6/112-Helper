@@ -16,6 +16,7 @@ from app.schemas.training import (
     AttemptWithCard,
     DraftSaveRequest,
     IncidentListResponse,
+    MyAttemptRow,
     JoinRequest,
     LessonRead,
     ParticipantRead,
@@ -303,6 +304,20 @@ async def incident_list(
 ) -> IncidentListResponse:
     data = await TrainingService(session).incident_list(lesson_id, student)
     return IncidentListResponse.model_validate(data)
+
+
+@router.get(
+    "/lessons/{lesson_id}/my-attempts",
+    response_model=list[MyAttemptRow],
+    summary="Мои карточки в занятии — и открытые, и закрытые, с оценкой",
+)
+async def my_attempts(
+    lesson_id: uuid.UUID,
+    session: SessionDep,
+    student=Depends(require(Perm.LESSONS_PARTICIPATE)),
+) -> list[MyAttemptRow]:
+    rows = await TrainingService(session).my_attempts(lesson_id, student)
+    return [MyAttemptRow.model_validate(row) for row in rows]
 
 
 @router.post(

@@ -272,7 +272,7 @@ voice-service: `POST /tts {"text", "voice": "male"|"female", "cache": true | "sa
 проксирует телефонию — `/telephony/*` → API `:8092` (с SSE), `/recordings/*` → записи
 ([deploy/nginx/default.conf](../deploy/nginx/default.conf)). Один origin: нет CORS и смешанного
 контента, работает с других ПК по LAN. Адрес API — `APP_CONFIG.TELEPHONY_API_URL` (`frontend/js/config.js`):
-`"telephony"` на стенде, `"http://localhost:8092"` для страницы с GitHub Pages / файла.
+`"telephony"` на стенде, `"http://localhost:8092"` для страницы с Live Server / файла.
 
 Звонки в интерфейсе — [frontend/js/telephony.js](../frontend/js/telephony.js):
 
@@ -281,7 +281,7 @@ voice-service: `POST /tts {"text", "voice": "male"|"female", "cache": true | "sa
 | низ справа | панель «Телефон»: аккаунт, телефон подключён, ML доступен, звонок, реплики, «Завершить», запись | `/endpoints`, `/health`, `/events`, `hangup` |
 | панель | номеронабиратель (мышь/клавиатура) + справочник | `{"dial"}`, `/numbers` |
 | панель, диспетчер | «Доклад старшего группы» — входящий доклад службы карточки (этапы по очереди) | `report` |
-| панель | отработки по открытой карточке: служба, номер, кто принял, суть, время, запись | — |
+| панель | отработки по открытой карточке: служба, номер, кто принял, суть, время, запись | Backend `/training/attempts/{id}/processings` |
 | карточка оператора и диспетчера | ☎ у каждой службы | `dispatch` |
 | карточка оператора, шапка | «☎ Вызов голосом» — учебный заявитель 112 звонит на телефон | `incident_112` |
 | карточка диспетчера | «Перезвонить и уточнить» | `applicant` |
@@ -289,8 +289,10 @@ voice-service: `POST /tts {"text", "voice": "male"|"female", "cache": true | "sa
 | шапка: доступен / недоступен | статус оператора | `PUT status` |
 
 Связь с `app.js` — события `dds:card-open`, `dds:card-close`, `dds:review-open`, `dds:review-close`,
-`dds:callback`, `dds:operator-status` и `window.DDS.addCallLog(id, entry)` — отработка сохраняется
-в карточке (`incident.calls[]`). Рабочее место: `session.workstation` (когда появится во входе),
+`dds:callback`, `dds:operator-status`. После `call.ended` / `call.failed` звонка по карточке панель
+записывает строку отработки в Backend: `POST /api/v1/training/attempts/{id}/processings` с `sip_call_id`
+(= `call_id`) — Backend не поднимает вызов повторно, привязывает запись разговора и не дублирует строку,
+если о звонке сообщили две вкладки. Рабочее место: `session.workstation` (выбирается при входе),
 `?ws=ws02` в адресе (запоминается) или `ws01`.
 
 Минимальный код для своей реализации (браузер, без библиотек):

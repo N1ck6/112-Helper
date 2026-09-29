@@ -396,6 +396,23 @@ class IncidentListRow(BaseModel):
     service_code: str | None = None
 
 
+class MyAttemptRow(BaseModel):
+    """Карточка обучающегося в занятии — очередь оператора и история диспетчера."""
+
+    attempt_id: uuid.UUID
+    card_no: str | None = None
+    incident_class: str | None = None
+    address: str | None = None
+    phone: str | None = None
+    status: AttemptStatus
+    issued_at: datetime
+    submitted_at: datetime | None = None
+    first_response_status: ResponseStatus | None = None
+    last_response_status: ResponseStatus | None = None
+    score: float | None = None
+    passed: bool | None = None
+
+
 class IncidentListResponse(BaseModel):
     """Весь список целиком: таймеры ожидающих карточек идут параллельно."""
 
@@ -419,6 +436,12 @@ class ProcessingCreate(BaseModel):
     answered_by: str | None = Field(default=None, max_length=128)
     summary: str = Field(min_length=3, max_length=2000)
     duration_ms: int | None = Field(default=None, ge=0)
+    #: Звонок уже состоялся через модуль телефонии (или телефон в браузере): его id.
+    #: Тогда вызов не поднимается повторно, а отработка привязывается к записи разговора.
+    sip_call_id: str | None = Field(default=None, max_length=128)
+    recording_url: str | None = Field(default=None, max_length=512)
+    #: failed — не дозвонились: строка «не оповещено», кто принял — не нужен.
+    outcome: str = Field(default="completed", pattern="^(completed|failed)$")
 
 
 class ProcessingRead(ORMModel):
@@ -436,6 +459,8 @@ class ProcessingRead(ORMModel):
     duration_ms: int | None = None
     call_id: uuid.UUID | None = None
     workplace_id: uuid.UUID | None = None
+    #: sip_call_id, recording_url, outcome — звонок, по которому записана отработка.
+    meta: dict[str, Any] = {}
 
 
 class ProcessingContact(BaseModel):

@@ -2,6 +2,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from classifier import load_classifier
@@ -15,6 +16,16 @@ from integration import build_router
 app = FastAPI(
     title="System-112 AI Training Service",
     version="2.0.0",
+)
+
+# АРМ на стенде ходит в ML через nginx (тот же адрес). CORS нужен, когда страницу отдаёт
+# другой сервер (Live Server :5500): звонок «В браузере» и поиск «Что случилось?».
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:5500,http://127.0.0.1:5500").split(",") if o.strip()],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 

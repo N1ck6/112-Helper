@@ -5,10 +5,9 @@
  * реплику можно напечатать. Собеседник говорит синтезом речи браузера
  * (мужской / женский русский голос по справочнику).
  *
- * Логика собеседников повторяет эталон ML-заглушки телефонии
- * (ml/integration/dialogue.py): dispatch / report / applicant / incident_112.
- * Если в config.js задан ML_DIALOGUE_URL — реплики берутся из ML
- * (контракт POST /dialogue/turn, telephony/API.md §3), при ошибке — по правилам.
+ * Реплики собеседников — те же, что в телефонии: ML-сервис (POST {ML_DIALOGUE_URL}/dialogue/turn,
+ * telephony/API.md §3); заявитель 112 по карточке занятия — через Backend, который подставляет
+ * скрытую от браузера карточку. Справочник служб — из телефонии (GET /directory).
  *
  * События звонка — те же, что шлёт телефония по SSE (call.dialing, call.started,
  * call.utterance, call.ended, call.failed): telephony.js обрабатывает их одинаково,
@@ -17,32 +16,18 @@
 (function () {
   "use strict";
 
-  const D = window.DDS_DATA || {};
   const cfg = window.APP_CONFIG || {};
   const ML_URL = String(cfg.ML_DIALOGUE_URL || "").replace(/\/$/, "");
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const synth = window.speechSynthesis;
 
   const MAX_TURNS = 12;
+  const SCENARIOS_112 = { "700": "scenario_001", "701": "scenario_002", "112": "scenario_001" };
   const LISTEN_MS = 12000;  // сколько ждём реплику обучающегося
   const RING_MS = 2600;     // гудки перед ответом собеседника
 
-  // Справочник учебных служб — копия telephony/virtual_caller/directory.json
-  // (работает и без запущенной телефонии). Телефония доступна — берётся /directory.
-  let directory = [
-    { number: "2101", id: "mchs_101", service: "Служба 101 (МЧС)", aliases: ["101", "мчс", "пожарн"], name: "Петров Андрей", position: "Старший диспетчер ЦУКС", gender: "male", accept: "Я вас понял, информация принята. Высылаем пожарный расчёт.", leader: { name: "Громов Сергей", position: "Начальник караула ПСЧ-12", gender: "male" } },
-    { number: "2102", id: "police_102", service: "Служба 102 (полиция)", aliases: ["102", "омвд", "мвд", "полиц"], name: "Смирнов Олег", position: "Оперативный дежурный ОМВД", gender: "male", accept: "Понял вас, информация принята. Направляем наряд.", leader: { name: "Кузнецов Илья", position: "Старший наряда ППС", gender: "male" } },
-    { number: "2103", id: "smp_103", service: "Служба 103 (СМП)", aliases: ["103", "смп", "скорая"], name: "Ковалёва Елена", position: "Старший врач смены", gender: "female", accept: "Я вас поняла, информация принята. Бригада направлена.", leader: { name: "Орлова Марина", position: "Фельдшер выездной бригады", gender: "female" } },
-    { number: "2104", id: "gas_104", service: "Служба 104 (Мосгаз)", aliases: ["104", "мосгаз", "газ"], name: "Лебедев Николай", position: "Диспетчер аварийной газовой службы", gender: "male", accept: "Понял, информация принята. Аварийная бригада выезжает." },
-    { number: "2201", id: "mosvodokanal", service: "Мосводоканал", aliases: ["водоканал"], name: "Волков Дмитрий", position: "Диспетчер аварийной службы", gender: "male", accept: "Принял, информация принята. Аварийную бригаду направим.", leader: { name: "Зайцев Павел", position: "Мастер аварийной бригады", gender: "male" } },
-    { number: "2202", id: "zhilishnik", service: "ГБУ «Жилищник»", aliases: ["жилищник"], name: "Сорокина Анна", position: "Диспетчер ОДС", gender: "female", accept: "Поняла вас, информация принята. Направляем сантехника и электрика." },
-    { number: "2203", id: "uprava", service: "Управа района", aliases: ["упр. района", "управа", "управы"], name: "Белова Ольга", position: "Дежурный управы района", gender: "female", accept: "Поняла, информация принята. Доложу главе управы." },
-    { number: "2204", id: "ods_psc", service: "ОДС ПСЦ", aliases: ["одс псц", "псц"], name: "Морозова Ирина", position: "Диспетчер объединённой диспетчерской службы", gender: "female", accept: "Поняла вас, информация принята." },
-    { number: "2205", id: "gormost", service: "ГБУ «Гормост»", aliases: ["гормост"], name: "Николаев Виктор", position: "Дежурный диспетчер Гормоста", gender: "male", accept: "Понял, информация принята. Выезжает дежурная бригада.", leader: { name: "Фёдоров Артём", position: "Бригадир дежурной бригады", gender: "male" } },
-    { number: "2206", id: "mosgortrans", service: "Мосгортранс", aliases: ["мосгортранс"], name: "Егоров Максим", position: "Дежурный диспетчер Мосгортранса", gender: "male", accept: "Понял вас, информация принята. Изменим маршруты в районе." },
-    { number: "2207", id: "codd", service: "ЦОДД", aliases: ["цодд", "дорожного движения"], name: "Павлов Роман", position: "Дежурный диспетчер ситуационного центра ЦОДД", gender: "male", accept: "Понял, информация принята. Направим эвакуатор и выставим ограждение." },
-    { number: "2208", id: "mosbez", service: "Мос.Без.", aliases: ["мос.без", "мосбез", "московская безопасность"], name: "Карпова Светлана", position: "Оперативный дежурный Мос.Без.", gender: "female", accept: "Поняла вас, информация принята. Направляем дежурную группу." },
-  ];
+  // Справочник учебных служб — telephony/virtual_caller/directory.json (telephony.js: GET /directory)
+  let directory = [];
 
   function setDirectory(list) {
     if (Array.isArray(list) && list.length) directory = list;
@@ -56,105 +41,24 @@
       || null;
   }
 
-  // ------------------------------------------------ правила собеседников ---
-  // Порт ml/integration/dialogue.py: те же фразы и условия.
-  const STOP = ["москва", "город", "улица", "проезд", "проспект", "шоссе", "бульвар", "переулок",
-                "площадь", "набережная", "корпус", "строение", "квартира", "подъезд", "район"];
-  const ASK_ADDRESS = "Назовите, пожалуйста, точный адрес происшествия.";
-  const REPORT_TEXT = {
-    arrival: "Прибыли на место{addr}. Приступаем к работам.",
-    in_progress: "Ведём работы{addr}, обстановка под контролем, помощь не требуется.",
-    completed: "Работы{addr} завершены, возвращаемся в подразделение.",
-    refused: "Выполнение работ{addr} невозможно, требуется другая служба.",
-  };
-
-  const said = (history, role) => history.filter((h) => h.role === role).map((h) => h.text || "");
-  const matches = (text, words) => words.some((w) => text.indexOf(w) !== -1);
-  const surname = (p) => String((p && p.name) || "").split(" ")[0];
-  const female = (p) => !!p && p.gender === "female";
   const reply = (text, end) => ({ reply_text: text, end_call: !!end });
+  const LOST = reply("Извините, вас плохо слышно, связь прерывается.", true);
 
-  function trailingSilence(history) {
-    let n = 0;
-    const list = said(history, "operator");
-    for (let i = list.length - 1; i >= 0 && !list[i].trim(); i--) n++;
-    return n;
-  }
-
-  // «Москва, ул. Ясный проезд, 10» -> ["ясн"]: основы значимых слов (ловит падежи)
-  function addressStems(address) {
-    const words = String(address || "").toLowerCase().match(/[а-яёa-z]{4,}/g) || [];
-    return words.filter((w) => STOP.indexOf(w) === -1).map((w) => w.slice(0, Math.max(3, w.length - 2)));
-  }
-  function addressMentioned(text, card) {
-    const stems = addressStems(card && card.address);
-    return !stems.length || stems.some((s) => text.indexOf(s) !== -1);
-  }
-
-  function dispatchTurn(p, card, turn, history, op) {
-    if (turn === 0 || op == null) return reply(`${p.position || "Дежурный"} ${surname(p)}, слушаю вас.`.replace(/\s+/g, " "));
-    const text = op.trim().toLowerCase();
-    if (!text) return trailingSilence(history) >= 2 ? reply("Вас не слышно. Перезвоните, пожалуйста.", true) : reply("Алло, слушаю вас, говорите.");
-    if (said(history, "caller").indexOf(ASK_ADDRESS) === -1 && !addressMentioned(text, card) && turn < 4) return reply(ASK_ADDRESS);
-    return reply(p.accept || (female(p) ? "Я вас поняла, информация принята." : "Я вас понял, информация принята."), true);
-  }
-
-  function reportBody(card, report) {
-    report = report || {};
-    if (report.text) return report.text;
-    const tpl = REPORT_TEXT[report.status] || REPORT_TEXT.arrival;
-    return tpl.replace("{addr}", card && card.address ? " по адресу " + card.address : "");
-  }
-
-  function reportTurn(p, card, report, turn, history, op) {
-    const body = reportBody(card, report);
-    if (turn === 0 || op == null) return reply(`Дежурно-диспетчерская служба? Говорит ${p.position || "старший группы"} ${surname(p)}. ${body} Как приняли?`);
-    if (op.trim()) return reply("Понял вас, конец связи.", true);
-    if (trailingSilence(history) >= 2) return reply("Связь плохая, доложу повторно.", true);
-    return reply("ДДС, как слышите? Повторяю: " + body);
-  }
-
-  function applicantTurn(p, card, turn, history, op) {
-    card = card || {};
-    if (turn === 0 || op == null) return reply("Алло?");
-    const text = op.trim().toLowerCase();
-    if (!text) return trailingSilence(history) >= 2 ? reply("Ничего не слышно, до свидания.", true) : reply("Алло, говорите!");
-    const story = card.description || card.title || "у нас тут происшествие";
-    if (!said(history, "caller").some((s) => s.indexOf(story) !== -1)) {
-      if (!matches(text, ["112", "сто двенадцать", "звонил", "обращал", "вызов"]) && turn === 1) return reply("Кто это? По какому вопросу?");
-      return reply(`Да, ${female(p) ? "звонила" : "звонил"}. ${story}. Когда приедут?`);
-    }
-    return reply("Хорошо, спасибо, ждём.", true);
-  }
-
-  // Заявитель 112: сценарий преподавателя (ответы по ключевым словам — DDS_DATA.callerReply)
-  function incidentTurn(scenario, turn, history, op) {
-    if (turn === 0 || op == null) return reply((scenario && scenario.opening) || "Алло! Нужна помощь!");
-    const text = op.trim();
-    if (!text) return trailingSilence(history) >= 2 ? reply("Вас не слышно, я перезвоню.", true) : reply("Алло? Вы меня слышите?");
-    const answer = D.callerReply ? D.callerReply(scenario, text) : "Повторите, пожалуйста.";
-    const closing = /спасибо|до свидания|ожидайте|выехал|направлен|бригад/i.test(text);
-    return reply(answer, closing || turn >= MAX_TURNS - 1);
-  }
-
-  function rulesTurn(call, turn, op) {
-    const p = call.persona || {};
-    if (call.call_type === "dispatch") return dispatchTurn(p, call.card, turn, call.transcript, op);
-    if (call.call_type === "report") return reportTurn(p, call.card, call.report, turn, call.transcript, op);
-    if (call.call_type === "applicant") return applicantTurn(p, call.card, turn, call.transcript, op);
-    if (call.call_type === "echo") return reply(turn === 0 ? "Эхо-тест. Скажите что-нибудь." : op ? "Вы сказали: " + op : "Ничего не слышно.", turn > 0);
-    return incidentTurn(call.scenario, turn, call.transcript, op);
-  }
-
+  // Реплика собеседника. Нет ответа от сервера — собеседник «теряет связь» и звонок
+  // заканчивается (как в телефонии при сбое ML), а не продолжается по выдуманным правилам.
   async function nextTurn(call, turn, op) {
-    // занятие на сервере: реплику заявителя готовит ML по карточке, которую подставляет Backend
-    if (call.attempt_id && window.DDS_SERVER && window.DDS_SERVER.enabled) {
+    if (call.call_type === "echo") return reply(turn === 0 ? "Эхо-тест. Скажите что-нибудь." : op ? "Вы сказали: " + op : "Ничего не слышно.", turn > 0);
+    const history = call.transcript.map((t) => ({ role: t.role, text: t.text }));
+    // заявитель 112 по карточке занятия: реплику готовит ML по карточке, которую подставляет Backend
+    if (call.attempt_id) {
       try {
         const data = await window.DDS_API.request("POST", "/training/attempts/" + call.attempt_id + "/dialogue", {
-          turn: turn, history: call.transcript.map((t) => ({ role: t.role, text: t.text })), operator_text: op,
+          turn: turn, history: history, operator_text: op,
         });
         if (data && typeof data.reply_text === "string") return data;
-      } catch (e) { /* сервер недоступен — ниже правила */ }
+      } catch (e) { /* ниже — обрыв связи */ }
+      call.lost = true;
+      return LOST;
     }
     if (ML_URL) {
       try {
@@ -165,14 +69,15 @@
             session_id: call.session_id, scenario_id: call.scenario_id || "", call_id: call.call_id,
             call_type: call.call_type, persona: call.persona,
             context: { card: call.card, report: call.report || null, trainee: call.trainee },
-            turn: turn, history: call.transcript.map((t) => ({ role: t.role, text: t.text })), operator_text: op,
+            turn: turn, history: history, operator_text: op,
           }),
         });
         const data = await res.json();
         if (res.ok && data && typeof data.reply_text === "string") return data;
-      } catch (e) { /* ML недоступен — отвечаем по правилам */ }
+      } catch (e) { /* ниже — обрыв связи */ }
     }
-    return rulesTurn(call, turn, op);
+    call.lost = true;
+    return LOST;
   }
 
   // ------------------------------------------------------------- голос ---
@@ -368,7 +273,7 @@
       event(call, "call.utterance", { turn: turn, role: "caller", text: r.reply_text });
       await speak(r.reply_text, voice, call);
       if (call.status === "ended") return;
-      if (r.end_call) return end(call, "completed");
+      if (r.end_call) return end(call, call.lost ? "ml_error" : "completed");
       if (call.onListen) call.onListen(true);
       op = await listen(call, call.onInterim);
       if (call.onListen) call.onListen(false);
@@ -419,15 +324,12 @@
       const name = String((call.card && call.card.caller) || "Заявитель");
       persona = { service: "Заявитель", name: name, number: (call.card && call.card.phone) || "3000", gender: genderByName(name) };
     }
-    if (type === "incident_112" && call.attempt_id) {
+    if (type === "incident_112") {
       call.incoming = true;
-      persona = { service: "Вызов 112", name: "Заявитель", gender: "female" };
-    } else if (type === "incident_112") {
-      call.incoming = true;
-      const all = D.getScenarios ? D.getScenarios() : [];
-      call.scenario = all.find((s) => s.id === opts.scenario_id) || all[0] || null;
-      const who = call.scenario ? call.scenario.caller.name : "Заявитель";
-      persona = { service: "Вызов 112", name: who, gender: genderByName(who) };
+      // 700 / 701 — учебные сценарии ML (пожар в квартире / ДТП), как при наборе с трубки
+      if (!call.attempt_id && !call.scenario_id) call.scenario_id = SCENARIOS_112[call.dialed] || SCENARIOS_112["700"];
+      const male = call.scenario_id === SCENARIOS_112["701"];
+      persona = { service: "Вызов 112", name: "Заявитель", gender: male ? "male" : "female" };
     }
     call.call_type = type;
     call.persona = persona;

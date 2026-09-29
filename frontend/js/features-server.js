@@ -1,6 +1,4 @@
-/* Кабинеты на данных Backend (серверный режим, js/server.js): преподаватель, администратор,
- * статистика обучающегося. Вкладки с server: true заменяют демо-вкладки с тем же id
- * (app.js tabsFor); без Backend работают демо-вкладки features-teacher/admin/common.
+/* Кабинеты на данных Backend: преподаватель, администратор, статистика обучающегося.
  *
  * Каждая вкладка рисует каркас, а данные подгружает в wire(): API — backend/docs/INTEGRATION.md.
  */
@@ -401,6 +399,51 @@
     ])));
   }
 
+  // ---------------------------------------------------------------- IP-телефония
+  // Рабочие места и параметры — Backend; регистрация телефонов и состояние — модуль телефонии.
+  const TEL = String((window.APP_CONFIG || {}).TELEPHONY_API_URL || "telephony").replace(/\/$/, "");
+  const telGet = (path) => fetch(TEL + path).then((r) => (r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status))));
+  const wsOf = (number) => "ws" + String(number || "").padStart(2, "0");
+  const recording = (url) => (url && !/^[a-z]+:\/\//i.test(TEL) ? "recordings/" + String(url).split("/").pop() : url);
+  const CALL_STATUS = { ringing: "вызов", answered: "разговор", ended: "завершён", missed: "не отвечен", failed: "сбой" };
+
+  function telephonyPanel(ctx) {
+    esc = ctx.esc;
+    return `<div class="panel-head"><h2>IP-телефония</h2><span class="count">обновление каждые 10 с</span></div>
+      <div id="tl-state" data-server-telephony></div>
+      <div class="panel-head" style="margin-top:12px"><h3>Рабочие места</h3></div><div id="tl-places"></div>
+      <div class="panel-head" style="margin-top:12px"><h3>Последние вызовы</h3></div><div id="tl-calls"></div>`;
+  }
+  function wireTelephony(root) {
+    const show = () => {
+      load(root, "#tl-state", Promise.all([req("GET", "/telephony/config"), telGet("/health").catch(() => null)]), ([cfg, h]) => `<div class="stat-grid">
+        ${statCard("Модуль телефонии", pill(!!h && h.ami !== false, h ? (h.ami === false ? "нет связи с Asterisk" : "работает") : "недоступен"), h ? "собеседники (ML): " + (h.ml ? "да" : "нет") + " · голос: " + (h.voice_service ? "да" : "нет") : esc(TEL))}
+        ${statCard("SIP-сервер", `<span class="cell-mono">${esc(location.hostname || "<IP стенда>")}:5063</span>`, "UDP · аккаунты ws01…ws20")}
+        ${statCard("Кодек", esc(cfg.codec), esc(cfg.transport))}
+        ${statCard("Норматив задержки", cfg.max_latency_ms + " мс", "превышение — в системный журнал")}
+        ${statCard("Запись разговоров", cfg.record_calls ? "включена" : "выключена", esc(cfg.audio_format))}
+        </div>`);
+      load(root, "#tl-places", Promise.all([req("GET", "/workplaces"), telGet("/endpoints").catch(() => null), req("GET", "/users?size=200")]), ([places, eps, users]) => {
+        const names = {};
+        (users.items || []).forEach((u) => (names[u.id] = u.full_name || u.username));
+        return table(["Место", "SIP-аккаунт", "Внутр. номер", "Телефон", "Кто за местом"], places.map((w) => {
+          const ep = Array.isArray(eps) ? eps.find((e) => e.endpoint === wsOf(w.number)) : null;
+          return [esc(w.title || w.number), `<span class="cell-mono">${wsOf(w.number)}</span>`, `<span class="cell-mono">${esc(w.phone_extension || "—")}</span>`,
+            eps ? pill(!!(ep && ep.registered), ep && ep.registered ? "подключён" : "не подключён") : pill(null, "нет данных"),
+            w.occupied_by_id ? esc(names[w.occupied_by_id] || "занято") : '<span class="cell-muted">свободно</span>'];
+        }), "Рабочие места не заведены.");
+      });
+      load(root, "#tl-calls", req("GET", "/telephony/calls?size=20"), (p) => table(["Начало", "Кто", "Куда", "Статус", "Длительность", "Задержка", "Запись"], (p.items || []).map((c) => [
+        dt(c.started_at), `<span class="cell-mono">${esc(c.caller_number || "—")}</span>`, `<span class="cell-mono">${esc(c.callee_number || "—")}</span>`,
+        pill(c.status === "ended" ? true : c.status === "failed" || c.status === "missed" ? false : null, CALL_STATUS[c.status] || c.status),
+        c.duration_ms == null ? "—" : Math.round(c.duration_ms / 1000) + " с", c.latency_ms == null ? "—" : c.latency_ms + " мс",
+        c.audio_path ? `<a href="${esc(recording(c.audio_path))}" target="_blank" rel="noopener">слушать</a>` : "—",
+      ]), "Вызовов пока не было."));
+    };
+    show();
+    every(10000, () => { if (stillHere("[data-server-telephony]")) show(); else timers.forEach(clearInterval); });
+  }
+
   // своя обёртка на каждую отрисовку: обработчики не копятся на общем #workspace
   const T = (roles, id, label, order, render, wire) => window.DDS_TABS.push({
     roles, id, label, order, server: true,
@@ -418,4 +461,5 @@
   T(["admin"], "users", "Пользователи", 20, usersPanel, wireUsers);
   T(["admin"], "system", "Состояние системы", 30, systemPanel, wireSystem);
   T(["admin"], "logs", "Журналы", 40, logsPanel, wireLogs);
+  T(["admin"], "telephony", "IP-телефония", 50, telephonyPanel, wireTelephony);
 })();

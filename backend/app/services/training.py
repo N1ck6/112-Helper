@@ -787,6 +787,37 @@ class TrainingService:
             "rows": rows,
         }
 
+    async def my_attempts(self, lesson_id: uuid.UUID, student: User) -> list[dict[str, Any]]:
+        """Все карточки обучающегося в занятии, новые сверху: очередь и история на АРМ.
+
+        Закрытые тоже — после перезагрузки страницы обучающийся видит свою работу и оценки.
+        """
+        lesson = await self.get_lesson_light(lesson_id)
+        participant = await self._participant(lesson, student.id)
+        rows = []
+        for attempt in await self.attempts.for_participant(participant.id):
+            card = await self.session.get(IncidentCard, attempt.card_id)
+            evaluation = await self.evaluations.for_attempt(attempt.id)
+            sent = attempt.submitted_payload or {}
+            rows.append(
+                {
+                    "attempt_id": attempt.id,
+                    "card_no": card.card_no if card else None,
+                    #: что сохранил сам обучающийся (для строки очереди)
+                    "incident_class": sent.get("incident_class"),
+                    "address": sent.get("address_text") or sent.get("address_street"),
+                    "phone": sent.get("aon_phone"),
+                    "status": attempt.status,
+                    "issued_at": attempt.issued_at,
+                    "submitted_at": attempt.submitted_at,
+                    "first_response_status": attempt.first_response_status,
+                    "last_response_status": attempt.last_response_status,
+                    "score": evaluation.score if evaluation else None,
+                    "passed": evaluation.passed if evaluation else None,
+                }
+            )
+        return rows
+
     async def open_card(self, attempt_id: uuid.UUID, student: User) -> CardAttempt:
         attempt = await self._own_active_attempt(attempt_id, student)
         if attempt.opened_at is None:
